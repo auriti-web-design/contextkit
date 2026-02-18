@@ -5,10 +5,11 @@
 
 import { createContextKit } from '../sdk/index.js';
 import { execSync } from 'child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync, appendFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { homedir, platform, release } from 'os';
 import { fileURLToPath } from 'url';
+import { createInterface } from 'readline';
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -164,6 +165,24 @@ function runEnvironmentChecks(): CheckResult[] {
         message: 'Unable to determine npm prefix',
       });
     }
+
+    // 3b. WSL: npm binary must be native Linux (not Windows npm)
+    try {
+      const npmPath = execSync('which npm', { encoding: 'utf8' }).trim();
+      const npmOnWindows = isWindowsPath(npmPath);
+      checks.push({
+        name: 'WSL: npm binary',
+        ok: !npmOnWindows,
+        message: npmOnWindows
+          ? `npm is the Windows version: ${npmPath}`
+          : `Native Linux npm: ${npmPath}`,
+        fix: npmOnWindows
+          ? 'Your npm binary is the Windows version running inside WSL.\n  This causes EPERM/UNC errors when installing packages.\n  Install Node.js (includes npm) natively in WSL:\n    curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.40.1/install.sh | bash\n    source ~/.bashrc\n    nvm install 22\n  Or:\n    curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -\n    sudo apt-get install -y nodejs'
+          : undefined,
+      });
+    } catch {
+      // which npm failed — non-blocking, npm is present if we got here
+    }
   }
 
   // 4. Node.js >= 18
@@ -246,6 +265,27 @@ function printChecks(checks: CheckResult[]): { hasErrors: boolean } {
   return { hasErrors };
 }
 
+// ─── Helper: prompt interattivo ───
+
+/** Chiede input all'utente via stdin e ritorna la risposta */
+function askUser(question: string): Promise<string> {
+  const rl = createInterface({ input: process.stdin, output: process.stdout });
+  return new Promise((resolve) => {
+    rl.question(question, (answer) => {
+      rl.close();
+      resolve(answer.trim().toLowerCase());
+    });
+  });
+}
+
+/** Rileva la shell corrente dell'utente */
+function detectShellRc(): { name: string; rcFile: string } {
+  const shell = process.env.SHELL || '/bin/bash';
+  if (shell.includes('zsh')) return { name: 'zsh', rcFile: join(homedir(), '.zshrc') };
+  if (shell.includes('fish')) return { name: 'fish', rcFile: join(homedir(), '.config/fish/config.fish') };
+  return { name: 'bash', rcFile: join(homedir(), '.bashrc') };
+}
+
 // ─── Install command ───
 
 async function installKiro() {
@@ -311,15 +351,60 @@ async function installKiro() {
 
   console.log(`  → Data dir:     ${dataDir}`);
 
-  // Summary
-  console.log('\n[3/3] Installation complete!\n');
-  console.log('To use Kiro with persistent memory:');
-  console.log('  kiro-cli --agent contextkit-memory\n');
-  console.log('To create a permanent alias:');
-  console.log('  echo \'alias kiro="kiro-cli --agent contextkit-memory"\' >> ~/.bashrc');
-  console.log('  source ~/.bashrc\n');
-  console.log('The worker starts automatically when a Kiro session begins.');
-  console.log(`Web dashboard: http://localhost:3001\n`);
+  // 3. Prompt per creazione alias
+  console.log('\n[3/3] Shell alias setup\n');
+
+  const { name: shellName, rcFile } = detectShellRc();
+  const aliasLine = 'alias kiro="kiro-cli --agent contextkit-memory"';
+
+  // Controlla se l'alias è già presente
+  let aliasAlreadySet = false;
+  if (existsSync(rcFile)) {
+    const rcContent = readFileSync(rcFile, 'utf8');
+    aliasAlreadySet = rcContent.includes('alias kiro=') && rcContent.includes('contextkit-memory');
+  }
+
+  if (aliasAlreadySet) {
+    console.log(`  \x1b[32m✓\x1b[0m Alias already configured in ${rcFile}`);
+  } else {
+    // Box evidenziato per l'alias
+    console.log('  \x1b[36m┌─────────────────────────────────────────────────────────┐\x1b[0m');
+    console.log('  \x1b[36m│\x1b[0m  Without an alias, you must type every time:            \x1b[36m│\x1b[0m');
+    console.log('  \x1b[36m│\x1b[0m    \x1b[2mkiro-cli --agent contextkit-memory\x1b[0m                    \x1b[36m│\x1b[0m');
+    console.log('  \x1b[36m│\x1b[0m                                                         \x1b[36m│\x1b[0m');
+    console.log('  \x1b[36m│\x1b[0m  With the alias, just type:                              \x1b[36m│\x1b[0m');
+    console.log('  \x1b[36m│\x1b[0m    \x1b[1m\x1b[32mkiro\x1b[0m                                                 \x1b[36m│\x1b[0m');
+    console.log('  \x1b[36m└─────────────────────────────────────────────────────────┘\x1b[0m');
+    console.log('');
+
+    const answer = await askUser(`  Add alias to ${rcFile}? [Y/n] `);
+
+    if (answer === '' || answer === 'y' || answer === 'yes') {
+      try {
+        appendFileSync(rcFile, `\n# Kiro Memory — persistent memory alias\n${aliasLine}\n`);
+        console.log(`\n  \x1b[32m✓\x1b[0m Alias added to ${rcFile}`);
+        console.log(`  \x1b[33m→\x1b[0m Run \x1b[1msource ${rcFile}\x1b[0m or open a new terminal to activate it.`);
+      } catch (err: any) {
+        console.log(`\n  \x1b[31m✗\x1b[0m Could not write to ${rcFile}: ${err.message}`);
+        console.log(`  \x1b[33m→\x1b[0m Add manually: ${aliasLine}`);
+      }
+    } else {
+      console.log(`\n  Skipped. You can add it manually later:`);
+      console.log(`    echo '${aliasLine}' >> ${rcFile}`);
+    }
+  }
+
+  // Riepilogo finale
+  console.log('\n\x1b[32m═══ Installation complete! ═══\x1b[0m\n');
+  console.log('  Start Kiro with memory:');
+  if (aliasAlreadySet) {
+    console.log('    \x1b[1mkiro\x1b[0m');
+  } else {
+    console.log('    \x1b[1mkiro-cli --agent contextkit-memory\x1b[0m');
+  }
+  console.log('');
+  console.log('  The worker starts automatically when a Kiro session begins.');
+  console.log(`  Web dashboard: \x1b[4mhttp://localhost:3001\x1b[0m\n`);
 }
 
 // ─── Doctor command ───
