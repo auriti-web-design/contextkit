@@ -69,7 +69,7 @@ npm run install:kiro
 Kiro Memory works as a **custom agent**. You must start Kiro with the `--agent` flag:
 
 ```bash
-kiro --agent kiro-memory
+kiro-cli --agent kiro-memory
 ```
 
 > **Why?** Kiro Memory uses hooks (`agentSpawn`, `postToolUse`, `userPromptSubmit`, `stop`) to capture context automatically. Hooks are defined inside the agent configuration, so they only run when the `kiro-memory` agent is active.
@@ -78,10 +78,10 @@ To avoid typing the flag every time, add an alias to your shell:
 
 ```bash
 # Bash
-echo 'alias kiro="kiro --agent kiro-memory"' >> ~/.bashrc && source ~/.bashrc
+echo 'alias kiro="kiro-cli --agent kiro-memory"' >> ~/.bashrc && source ~/.bashrc
 
 # Zsh
-echo 'alias kiro="kiro --agent kiro-memory"' >> ~/.zshrc && source ~/.zshrc
+echo 'alias kiro="kiro-cli --agent kiro-memory"' >> ~/.zshrc && source ~/.zshrc
 ```
 
 Once running, the worker auto-starts and the web dashboard is available at `http://localhost:3001`.
