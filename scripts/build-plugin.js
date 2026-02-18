@@ -23,12 +23,18 @@ const bunSqliteShimPlugin = {
   }
 };
 
+// Banner per abilitare require() in contesto ESM (necessario per moduli CJS nativi come better-sqlite3)
+const esmRequireBanner = {
+  js: `import { createRequire } from 'module';const require = createRequire(import.meta.url);`
+};
+
 // Opzioni comuni per tutti i build Node.js
 const nodeCommon = {
   bundle: true,
   platform: 'node',
   target: 'node18',
   format: 'esm',
+  banner: esmRequireBanner,
   plugins: [bunSqliteShimPlugin],
   external: ['better-sqlite3']  // CJS nativo, caricato a runtime
 };
@@ -44,12 +50,13 @@ async function build() {
 
   ensureDir(DIST_DIR);
 
-  // Build CLI
+  // Build CLI (banner con shebang + createRequire)
   console.log('Building CLI...');
   await esbuild.build({
     ...nodeCommon,
     entryPoints: [join(SRC_DIR, 'cli', 'contextkit.ts')],
-    outfile: join(DIST_DIR, 'cli', 'contextkit.js')
+    outfile: join(DIST_DIR, 'cli', 'contextkit.js'),
+    banner: { js: `#!/usr/bin/env node\n${esmRequireBanner.js}` }
   });
 
   // Build SDK
@@ -66,7 +73,7 @@ async function build() {
     ...nodeCommon,
     entryPoints: [join(SRC_DIR, 'services', 'worker-service.ts')],
     outfile: join(DIST_DIR, 'worker-service.js'),
-    external: ['express', 'cors']
+    external: ['better-sqlite3', 'express', 'cors']
   });
 
   // Build hook Kiro-compatibili (4 script eseguibili)
@@ -94,7 +101,7 @@ async function build() {
     ...nodeCommon,
     entryPoints: [join(SRC_DIR, 'servers', 'mcp-server.ts')],
     outfile: join(DIST_DIR, 'servers', 'mcp-server.js'),
-    external: ['@modelcontextprotocol/sdk']
+    external: ['better-sqlite3', '@modelcontextprotocol/sdk']
   });
 
   // Build SQLite services (singoli file)
@@ -123,7 +130,7 @@ async function build() {
       join(SRC_DIR, 'services', 'search', 'HybridSearch.ts')
     ],
     outdir: join(DIST_DIR, 'services', 'search'),
-    external: ['chromadb']
+    external: ['better-sqlite3', 'chromadb']
   });
 
   // Build shared
@@ -156,7 +163,7 @@ async function build() {
     ...nodeCommon,
     entryPoints: [join(SRC_DIR, 'index.ts')],
     outfile: join(DIST_DIR, 'index.js'),
-    external: ['express', 'cors', 'chromadb']
+    external: ['better-sqlite3', 'express', 'cors', 'chromadb']
   });
 
   // Copy viewer HTML

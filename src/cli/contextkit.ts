@@ -1,7 +1,6 @@
-#!/usr/bin/env node
-
 /**
- * ContextKit CLI - Command line interface for Kiro integration
+ * Kiro Memory CLI - Command line interface
+ * (shebang aggiunto automaticamente dal build)
  */
 
 import { createContextKit } from '../sdk/index.js';
