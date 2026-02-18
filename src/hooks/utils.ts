@@ -7,7 +7,29 @@
  * - Exit code 0 = successo, 2 = blocco (stderr inviato all'LLM)
  */
 
+import { writeFileSync, mkdirSync, existsSync } from 'fs';
+import { join } from 'path';
 import type { KiroHookInput } from '../types/worker-types.js';
+
+/**
+ * Logging di debug per gli hook (attivo solo con KIRO_MEMORY_LOG_LEVEL=DEBUG)
+ */
+export function debugLog(hookName: string, label: string, data: unknown): void {
+  if ((process.env.KIRO_MEMORY_LOG_LEVEL || '').toUpperCase() !== 'DEBUG') return;
+  try {
+    const dataDir = process.env.KIRO_MEMORY_DATA_DIR
+      || join(process.env.HOME || '/tmp', '.kiro-memory');
+    const logDir = join(dataDir, 'logs');
+    if (!existsSync(logDir)) mkdirSync(logDir, { recursive: true });
+
+    const ts = new Date().toISOString();
+    const line = `[${ts}] [${hookName}] ${label}: ${JSON.stringify(data)}\n`;
+    const logFile = join(logDir, `hooks-${new Date().toISOString().split('T')[0]}.log`);
+    writeFileSync(logFile, line, { flag: 'a' });
+  } catch {
+    // Il logging non deve mai bloccare l'hook
+  }
+}
 
 /**
  * Legge e parsa JSON da stdin
@@ -129,10 +151,13 @@ export async function runHook(
 ): Promise<void> {
   try {
     const input = await readStdin();
+    debugLog(name, 'stdin', input);
     await handler(input);
+    debugLog(name, 'completato', { success: true });
     process.exit(0);
   } catch (error) {
-    process.stderr.write(`[contextkit:${name}] Errore: ${error}\n`);
+    debugLog(name, 'errore', { error: String(error) });
+    process.stderr.write(`[kiro-memory:${name}] Errore: ${error}\n`);
     process.exit(0); // Exit 0 per degradazione silenziosa (non bloccare Kiro)
   }
 }

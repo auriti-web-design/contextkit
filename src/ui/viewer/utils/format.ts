@@ -8,6 +8,7 @@
 export function getBadgeClass(type: string): string {
   const map: Record<string, string> = {
     'file-write': 'badge--file-write',
+    'file-read': 'badge--file-read',
     'command': 'badge--command',
     'research': 'badge--research',
     'delegation': 'badge--delegation',

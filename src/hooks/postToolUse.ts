@@ -12,9 +12,35 @@ import { createContextKit } from '../sdk/index.js';
 runHook('postToolUse', async (input) => {
   if (!input.tool_name) return;
 
-  // Ignora tool di basso valore per evitare rumore
-  const ignoredTools = ['glob', 'grep', 'fs_read', 'read', 'introspect', 'thinking', 'todo'];
+  // Tool completamente ignorati (nessun valore informativo)
+  const ignoredTools = ['introspect', 'thinking', 'todo'];
   if (ignoredTools.includes(input.tool_name)) return;
+
+  // Tool di lettura: traccia in modo leggero (solo file, no contenuto)
+  const readOnlyTools = ['glob', 'grep', 'fs_read', 'read'];
+  if (readOnlyTools.includes(input.tool_name)) {
+    const project = detectProject(input.cwd);
+    const sdk = createContextKit({ project });
+    try {
+      const files = extractFiles(input.tool_input, input.tool_response);
+      // Crea osservazione leggera solo se ci sono file o è una ricerca significativa
+      const query = input.tool_input?.pattern || input.tool_input?.regex || input.tool_input?.query || '';
+      const title = input.tool_name === 'grep' || input.tool_name === 'glob'
+        ? `Cercato: ${query}`.substring(0, 100)
+        : `Letto: ${files[0] || input.tool_input?.path || input.tool_input?.file_path || 'file'}`;
+
+      await sdk.storeObservation({
+        type: 'file-read',
+        title,
+        content: files.length > 0 ? `File: ${files.join(', ')}` : `Tool ${input.tool_name} eseguito`,
+        files
+      });
+      await notifyWorker('observation-created', { project, title, type: 'file-read' });
+    } finally {
+      sdk.close();
+    }
+    return;
+  }
 
   const project = detectProject(input.cwd);
   const sdk = createContextKit({ project });
@@ -88,6 +114,10 @@ function categorizeToolUse(toolName: string): string {
   const categories: Record<string, string> = {
     'fs_write': 'file-write',
     'write': 'file-write',
+    'fs_read': 'file-read',
+    'read': 'file-read',
+    'glob': 'file-read',
+    'grep': 'file-read',
     'execute_bash': 'command',
     'shell': 'command',
     'web_search': 'research',

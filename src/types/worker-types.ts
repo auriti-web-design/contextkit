@@ -229,14 +229,39 @@ export interface ContextContext {
 // ============================================================================
 
 /**
- * Input JSON ricevuto via stdin dagli hook Kiro CLI
+ * Input JSON ricevuto via stdin dagli hook Kiro CLI / Claude Code
+ *
+ * Campi comuni a tutti gli hook:
+ * - session_id, cwd, hook_event_name
+ *
+ * Campi specifici per hook:
+ * - UserPromptSubmit: prompt (testo dell'utente, top-level)
+ * - PostToolUse: tool_name, tool_input, tool_response, tool_use_id
+ * - Stop: stop_hook_active, transcript_path
+ * - SessionStart/agentSpawn: transcript_path
  */
 export interface KiroHookInput {
-  hook_event_name: 'agentSpawn' | 'userPromptSubmit' | 'preToolUse' | 'postToolUse' | 'stop';
+  hook_event_name: string;
+  session_id?: string;
   cwd: string;
+  transcript_path?: string;
+  permission_mode?: string;
+
+  // UserPromptSubmit: il prompt è top-level, NON in tool_input
+  prompt?: string;
+  user_prompt?: string;
+
+  // PostToolUse / PreToolUse
   tool_name?: string;
   tool_input?: any;
   tool_response?: any;
+  tool_use_id?: string;
+
+  // Stop
+  stop_hook_active?: boolean;
+
+  // Catch-all per campi non ancora mappati
+  [key: string]: any;
 }
 
 // ============================================================================

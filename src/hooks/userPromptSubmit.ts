@@ -10,22 +10,23 @@ import { runHook, detectProject, notifyWorker } from './utils.js';
 import { createContextKit } from '../sdk/index.js';
 
 runHook('userPromptSubmit', async (input) => {
+  // Il prompt è un campo top-level, NON dentro tool_input
+  const promptText = input.prompt
+    || input.user_prompt
+    || input.tool_input?.prompt
+    || input.tool_input?.content;
+
+  if (!promptText || typeof promptText !== 'string' || promptText.trim().length === 0) return;
+
   const project = detectProject(input.cwd);
   const sdk = createContextKit({ project });
 
   try {
-    // Estrai il testo del prompt dall'input del tool
-    const promptText = input.tool_input?.prompt
-      || input.tool_input?.content
-      || input.tool_input?.message
-      || JSON.stringify(input.tool_input || '').substring(0, 500);
+    // Usa session_id da Kiro se disponibile, altrimenti genera uno
+    const sessionId = input.session_id
+      || `kiro-${new Date().toISOString().split('T')[0]}-${project}`;
 
-    if (!promptText || promptText === '""') return;
-
-    // Genera un session ID basato sulla data
-    const sessionId = `kiro-${new Date().toISOString().split('T')[0]}-${project}`;
-
-    await sdk.storePrompt(sessionId, Date.now(), promptText);
+    await sdk.storePrompt(sessionId, Date.now(), promptText.trim());
 
     // Notifica la dashboard in tempo reale
     await notifyWorker('prompt-created', { project });
