@@ -6,7 +6,7 @@
  * Funzione: genera e salva un sommario della sessione corrente
  */
 
-import { runHook, detectProject } from './utils.js';
+import { runHook, detectProject, notifyWorker } from './utils.js';
 import { createContextKit } from '../sdk/index.js';
 
 runHook('stop', async (input) => {
@@ -51,6 +51,9 @@ runHook('stop', async (input) => {
         ? `File modificati: ${filesModified.join(', ')}`
         : undefined
     });
+
+    // Notifica la dashboard in tempo reale
+    await notifyWorker('summary-created', { project });
   } finally {
     sdk.close();
   }

@@ -6,7 +6,7 @@
  * Funzione: salva un'osservazione con nome tool, input e output
  */
 
-import { runHook, detectProject } from './utils.js';
+import { runHook, detectProject, notifyWorker } from './utils.js';
 import { createContextKit } from '../sdk/index.js';
 
 runHook('postToolUse', async (input) => {
@@ -38,6 +38,9 @@ runHook('postToolUse', async (input) => {
       content,
       files
     });
+
+    // Notifica la dashboard in tempo reale
+    await notifyWorker('observation-created', { project, title, type });
   } finally {
     sdk.close();
   }

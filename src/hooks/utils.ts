@@ -98,6 +98,29 @@ export function formatContext(data: {
 }
 
 /**
+ * Notifica il worker che ci sono nuovi dati.
+ * Chiama POST /api/notify per triggerare il broadcast SSE ai client della dashboard.
+ * Non-bloccante: se il worker non è attivo, ignora silenziosamente.
+ */
+export async function notifyWorker(event: string, data?: Record<string, unknown>): Promise<void> {
+  const host = process.env.KIRO_MEMORY_WORKER_HOST || '127.0.0.1';
+  const port = process.env.KIRO_MEMORY_WORKER_PORT || '3001';
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 1500);
+    await fetch(`http://${host}:${port}/api/notify`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ event, data: data || {} }),
+      signal: controller.signal
+    });
+    clearTimeout(timeout);
+  } catch {
+    // Worker non attivo — ignora silenziosamente
+  }
+}
+
+/**
  * Wrapper sicuro per eseguire un hook con gestione errori
  */
 export async function runHook(

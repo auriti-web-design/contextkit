@@ -53,6 +53,18 @@ function broadcast(event: string, data: any): void {
   });
 }
 
+// Endpoint di notifica: gli hook chiamano questo endpoint dopo ogni scrittura in SQLite
+// per triggerare il broadcast SSE ai client della dashboard
+app.post('/api/notify', express.json(), (req, res) => {
+  const { event, data } = req.body || {};
+  if (event && typeof event === 'string') {
+    broadcast(event, data || {});
+    res.json({ ok: true });
+  } else {
+    res.status(400).json({ error: 'Campo "event" richiesto' });
+  }
+});
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({ 

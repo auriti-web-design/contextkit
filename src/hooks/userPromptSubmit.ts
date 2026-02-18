@@ -6,7 +6,7 @@
  * Funzione: salva il prompt nel database per contesto futuro
  */
 
-import { runHook, detectProject } from './utils.js';
+import { runHook, detectProject, notifyWorker } from './utils.js';
 import { createContextKit } from '../sdk/index.js';
 
 runHook('userPromptSubmit', async (input) => {
@@ -26,6 +26,9 @@ runHook('userPromptSubmit', async (input) => {
     const sessionId = `kiro-${new Date().toISOString().split('T')[0]}-${project}`;
 
     await sdk.storePrompt(sessionId, Date.now(), promptText);
+
+    // Notifica la dashboard in tempo reale
+    await notifyWorker('prompt-created', { project });
   } finally {
     sdk.close();
   }
