@@ -38,6 +38,8 @@ When a new session starts, Kiro Memory automatically injects previous session co
 - **Prompt Tracking** -- Every user prompt recorded for continuity (`userPromptSubmit` hook)
 - **Tool & File Monitoring** -- File writes, command executions, and tool usage captured in real time (`postToolUse` hook)
 - **Session Summaries** -- Structured summaries generated when sessions end (`stop` hook)
+- **Web Dashboard** -- Real-time viewer at `http://localhost:3001` with dark/light theme, search, project filters, and live updates via SSE
+- **Auto-Start Worker** -- The background worker starts automatically when a Kiro session begins (no manual setup required)
 - **MCP Server** -- 4 tools (`search`, `timeline`, `get_observations`, `get_context`) exposed via Model Context Protocol
 - **Full-Text Search** -- SQLite FTS5 for fast, typo-tolerant search across all stored context
 - **TypeScript SDK** -- Programmatic access to the entire memory system
@@ -62,11 +64,7 @@ npm install && npm run build
 npm run install:kiro
 ```
 
-Start the worker, then use Kiro as usual -- Kiro Memory runs in the background:
-
-```bash
-npm run worker:start
-```
+Use Kiro as usual -- Kiro Memory runs entirely in the background. The worker auto-starts when a session begins, and the web dashboard is available at `http://localhost:3001`.
 
 ## Kiro Integration
 
@@ -108,11 +106,16 @@ The hooks are fully automatic. No changes to your workflow required.
             Worker HTTP    MCP Server
             (port 3001)     (stdio)
                  |             |
-                 +------+------+
+            Web Dashboard     |
+          (localhost:3001)    |
+                 |            |
+                 +------+-----+
                         |
                    SQLite + FTS5
                (~/.kiro-memory/kiro-memory.db)
 ```
+
+> The worker auto-starts when `agentSpawn` fires. No manual setup required.
 
 ### Hooks
 
@@ -242,7 +245,16 @@ kiro-memory add-observation "Architecture Decision" "Chose PostgreSQL over Mongo
 | `KIRO_MEMORY_LOG_LEVEL` | `INFO` | Log verbosity: `DEBUG`, `INFO`, `WARN`, `ERROR` |
 | `KIRO_CONFIG_DIR` | `~/.kiro` | Kiro CLI configuration directory |
 
-### Worker Management
+### Worker & Web Dashboard
+
+The worker starts automatically when a Kiro session begins (via the `agentSpawn` hook). Once running, open `http://localhost:3001` in your browser to access the web dashboard with:
+
+- **Live feed** of observations, summaries, and prompts (via SSE)
+- **Project sidebar** with type filters and stats
+- **Spotlight search** (Ctrl+K / Cmd+K) with instant results
+- **Dark/light theme** toggle
+
+For development, you can also manage the worker manually:
 
 ```bash
 npm run worker:start     # Start the background worker
