@@ -18,4 +18,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Session Summaries**: Structured summaries generated automatically at session end
 - **Kiro Install Script**: One-command setup via `contextkit install` or `npm run install:kiro`
 
+### Changed
+
+- **npm package name**: Published as `kiro-memory` (the name `contextkit` was unavailable on npm registry)
+
 [1.0.0]: https://github.com/auriti-web-design/contextkit/releases/tag/v1.0.0

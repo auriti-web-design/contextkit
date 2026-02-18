@@ -3,7 +3,7 @@
 **Persistent cross-session memory for [Kiro CLI](https://kiro.dev/).**
 
 ![CI](https://github.com/auriti-web-design/contextkit/actions/workflows/ci.yml/badge.svg)
-![npm](https://img.shields.io/npm/v/contextkit)
+![npm](https://img.shields.io/npm/v/kiro-memory)
 ![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
 ![Node](https://img.shields.io/badge/node-%3E%3D18-green)
 
@@ -48,7 +48,7 @@ When a new session starts, ContextKit automatically injects previous session con
 
 ```bash
 # Install globally
-npm install -g contextkit
+npm install -g kiro-memory
 
 # Install into Kiro CLI (hooks + MCP server + agent config)
 contextkit install
