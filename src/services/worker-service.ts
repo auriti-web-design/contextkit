@@ -7,12 +7,16 @@
 
 import express from 'express';
 import cors from 'cors';
-import { join } from 'path';
+import { join, dirname } from 'path';
 import { homedir } from 'os';
 import { existsSync, mkdirSync, writeFileSync, unlinkSync, readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
 import { ContextKitDatabase } from './sqlite/Database.js';
 import { logger } from '../utils/logger.js';
 import { DATA_DIR } from '../shared/paths.js';
+
+// Directory del file compilato (per servire asset statici)
+const __worker_dirname = dirname(fileURLToPath(import.meta.url));
 
 const PORT = process.env.CONTEXTKIT_WORKER_PORT || 3001;
 const HOST = process.env.CONTEXTKIT_WORKER_HOST || '127.0.0.1';
@@ -251,9 +255,102 @@ app.get('/api/stats/:project', (req, res) => {
   }
 });
 
+// Lista osservazioni paginata
+app.get('/api/observations', (req, res) => {
+  const { offset, limit, project } = req.query as { offset?: string; limit?: string; project?: string };
+  const _offset = offset ? parseInt(offset, 10) : 0;
+  const _limit = limit ? parseInt(limit, 10) : 50;
+
+  try {
+    const sql = project
+      ? 'SELECT * FROM observations WHERE project = ? ORDER BY created_at_epoch DESC LIMIT ? OFFSET ?'
+      : 'SELECT * FROM observations ORDER BY created_at_epoch DESC LIMIT ? OFFSET ?';
+    const stmt = db.db.query(sql);
+    const rows = project ? stmt.all(project, _limit, _offset) : stmt.all(_limit, _offset);
+    res.json(rows);
+  } catch (error) {
+    logger.error('WORKER', 'Lista osservazioni fallita', {}, error as Error);
+    res.status(500).json({ error: 'Failed to list observations' });
+  }
+});
+
+// Lista summary paginata
+app.get('/api/summaries', (req, res) => {
+  const { offset, limit, project } = req.query as { offset?: string; limit?: string; project?: string };
+  const _offset = offset ? parseInt(offset, 10) : 0;
+  const _limit = limit ? parseInt(limit, 10) : 20;
+
+  try {
+    const sql = project
+      ? 'SELECT * FROM summaries WHERE project = ? ORDER BY created_at_epoch DESC LIMIT ? OFFSET ?'
+      : 'SELECT * FROM summaries ORDER BY created_at_epoch DESC LIMIT ? OFFSET ?';
+    const stmt = db.db.query(sql);
+    const rows = project ? stmt.all(project, _limit, _offset) : stmt.all(_limit, _offset);
+    res.json(rows);
+  } catch (error) {
+    logger.error('WORKER', 'Lista summary fallita', {}, error as Error);
+    res.status(500).json({ error: 'Failed to list summaries' });
+  }
+});
+
+// Lista prompt paginata
+app.get('/api/prompts', (req, res) => {
+  const { offset, limit, project } = req.query as { offset?: string; limit?: string; project?: string };
+  const _offset = offset ? parseInt(offset, 10) : 0;
+  const _limit = limit ? parseInt(limit, 10) : 20;
+
+  try {
+    const sql = project
+      ? 'SELECT * FROM prompts WHERE project = ? ORDER BY created_at_epoch DESC LIMIT ? OFFSET ?'
+      : 'SELECT * FROM prompts ORDER BY created_at_epoch DESC LIMIT ? OFFSET ?';
+    const stmt = db.db.query(sql);
+    const rows = project ? stmt.all(project, _limit, _offset) : stmt.all(_limit, _offset);
+    res.json(rows);
+  } catch (error) {
+    logger.error('WORKER', 'Lista prompt fallita', {}, error as Error);
+    res.status(500).json({ error: 'Failed to list prompts' });
+  }
+});
+
+// Lista progetti distinti
+app.get('/api/projects', (_req, res) => {
+  try {
+    const stmt = db.db.query(
+      `SELECT DISTINCT project FROM (
+        SELECT project FROM observations
+        UNION
+        SELECT project FROM summaries
+        UNION
+        SELECT project FROM prompts
+      ) ORDER BY project ASC`
+    );
+    const rows = stmt.all() as { project: string }[];
+    res.json(rows.map(r => r.project));
+  } catch (error) {
+    logger.error('WORKER', 'Lista progetti fallita', {}, error as Error);
+    res.status(500).json({ error: 'Failed to list projects' });
+  }
+});
+
+// Servire la UI viewer (file statici dalla directory dist)
+app.use(express.static(__worker_dirname, {
+  index: false,
+  maxAge: '1h'
+}));
+
+// Route root → viewer HTML
+app.get('/', (_req, res) => {
+  const viewerPath = join(__worker_dirname, 'viewer.html');
+  if (existsSync(viewerPath)) {
+    res.sendFile(viewerPath);
+  } else {
+    res.status(404).json({ error: 'Viewer not found. Run npm run build first.' });
+  }
+});
+
 // Start server
 const server = app.listen(Number(PORT), HOST, () => {
-  logger.info('WORKER', `ContextKit worker started on ${HOST}:${PORT}`);
+  logger.info('WORKER', `Kiro Memory worker started on http://${HOST}:${PORT}`);
   
   // Write PID file
   writeFileSync(PID_FILE, String(process.pid), 'utf-8');

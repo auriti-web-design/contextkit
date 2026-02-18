@@ -1,5 +1,5 @@
 /**
- * ContextKit Viewer Types
+ * Kiro Memory Viewer Types
  */
 
 export interface Observation {

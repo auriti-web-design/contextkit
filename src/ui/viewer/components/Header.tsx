@@ -1,55 +1,30 @@
 import React from 'react';
-import { ThemePreference } from '../types';
+import { SearchBar } from './SearchBar';
 
 interface HeaderProps {
   isConnected: boolean;
-  projects: string[];
-  currentFilter: string;
-  onFilterChange: (filter: string) => void;
-  themePreference: ThemePreference;
-  onThemeChange: (theme: ThemePreference) => void;
+  resolvedTheme: 'light' | 'dark';
+  onThemeToggle: () => void;
 }
 
-export function Header({
-  isConnected,
-  projects,
-  currentFilter,
-  onFilterChange,
-  themePreference,
-  onThemeChange
-}: HeaderProps) {
+export function Header({ isConnected, resolvedTheme, onThemeToggle }: HeaderProps) {
   return (
     <header className="header">
-      <div className="header-left">
-        <h1>ContextKit</h1>
-        <span className={`connection-status ${isConnected ? 'connected' : 'disconnected'}`}>
-          {isConnected ? 'Connected' : 'Disconnected'}
-        </span>
+      <div className="header-brand">
+        <span className={`status-dot ${isConnected ? 'connected' : 'disconnected'}`} />
+        <h1>Kiro Memory</h1>
       </div>
 
-      <div className="header-center">
-        <select
-          value={currentFilter}
-          onChange={(e) => onFilterChange(e.target.value)}
-          className="project-filter"
-        >
-          <option value="">All Projects</option>
-          {projects.map(project => (
-            <option key={project} value={project}>{project}</option>
-          ))}
-        </select>
-      </div>
+      <SearchBar />
 
-      <div className="header-right">
-        <select
-          value={themePreference}
-          onChange={(e) => onThemeChange(e.target.value as ThemePreference)}
-          className="theme-selector"
+      <div className="header-controls">
+        <button
+          className="theme-btn"
+          onClick={onThemeToggle}
+          title={resolvedTheme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'}
         >
-          <option value="system">System</option>
-          <option value="light">Light</option>
-          <option value="dark">Dark</option>
-        </select>
+          {resolvedTheme === 'dark' ? '\u2600' : '\u263E'}
+        </button>
       </div>
     </header>
   );

@@ -6,7 +6,7 @@ export function useTheme() {
   const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark'>('light');
 
   useEffect(() => {
-    const saved = localStorage.getItem('contextkit-theme') as ThemePreference;
+    const saved = localStorage.getItem('kiro-memory-theme') as ThemePreference;
     if (saved) {
       setPreference(saved);
     }
@@ -38,7 +38,7 @@ export function useTheme() {
 
   const setThemePreference = (theme: ThemePreference) => {
     setPreference(theme);
-    localStorage.setItem('contextkit-theme', theme);
+    localStorage.setItem('kiro-memory-theme', theme);
   };
 
   return { preference, resolvedTheme, setThemePreference };

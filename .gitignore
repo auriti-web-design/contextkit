@@ -25,9 +25,6 @@ private/
 datasets/
 Auto Run Docs/
 
-# Generated UI files (built from viewer-template.html)
-src/ui/viewer.html
-
 # Local MCP server config (for development only)
 .mcp.json
 .cursor/

@@ -1,5 +1,6 @@
 import React from 'react';
 import { Observation, Summary, UserPrompt } from '../types';
+import { getBadgeClass, timeAgo } from '../utils/format';
 
 interface FeedProps {
   observations: Observation[];
@@ -11,7 +12,7 @@ interface FeedProps {
 }
 
 export function Feed({ observations, summaries, prompts, onLoadMore, isLoading, hasMore }: FeedProps) {
-  // Combine and sort by timestamp
+  // Unisce tutti i tipi e ordina per timestamp decrescente
   const items = [...observations, ...summaries, ...prompts].sort(
     (a, b) => b.created_at_epoch - a.created_at_epoch
   );
@@ -19,8 +20,8 @@ export function Feed({ observations, summaries, prompts, onLoadMore, isLoading, 
   return (
     <div className="feed">
       {items.map((item) => {
-        if ('type' in item) {
-          return <ObservationCard key={`obs-${item.id}`} observation={item as Observation} />;
+        if ('type' in item && 'title' in item) {
+          return <ObservationCard key={`obs-${item.id}`} obs={item as Observation} />;
         } else if ('request' in item) {
           return <SummaryCard key={`sum-${item.id}`} summary={item as Summary} />;
         } else {
@@ -34,35 +35,83 @@ export function Feed({ observations, summaries, prompts, onLoadMore, isLoading, 
           onClick={onLoadMore}
           disabled={isLoading}
         >
-          {isLoading ? 'Loading...' : 'Load More'}
+          {isLoading ? 'Caricamento...' : 'Carica altri'}
         </button>
       )}
 
       {items.length === 0 && !isLoading && (
         <div className="empty-state">
-          <p>No data available. Start using ContextKit to see your context here.</p>
+          <div className="empty-state-icon">
+            <svg viewBox="0 0 24 24" width="48" height="48" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M12 6v6l4 2" strokeLinecap="round" />
+              <circle cx="12" cy="12" r="10" />
+            </svg>
+          </div>
+          <p>Nessun dato disponibile.</p>
+          <p className="empty-state-hint">Avvia una sessione con Kiro per iniziare a raccogliere contesto.</p>
         </div>
       )}
     </div>
   );
 }
 
-function ObservationCard({ observation }: { observation: Observation }) {
+/* ── Card Osservazione ── */
+function ObservationCard({ obs }: { obs: Observation }) {
+  // Tipo specifico per il bordo sinistro
+  const cardClass = `card card--${obs.type.replace(/\s+/g, '-')}`;
+
   return (
-    <div className="card observation-card">
+    <div className={cardClass}>
       <div className="card-header">
-        <span className="card-type">{observation.type}</span>
-        <span className="card-project">{observation.project}</span>
-        <span className="card-date">
-          {new Date(observation.created_at).toLocaleString()}
-        </span>
+        <span className={`badge ${getBadgeClass(obs.type)}`}>{obs.type}</span>
+        <span className="card-project">{obs.project}</span>
+        <span className="card-time">{timeAgo(obs.created_at_epoch)}</span>
       </div>
-      <h3 className="card-title">{observation.title}</h3>
-      {observation.subtitle && <p className="card-subtitle">{observation.subtitle}</p>}
-      {observation.text && <p className="card-content">{observation.text}</p>}
-      {observation.concepts && (
+
+      <h3 className="card-title">{obs.title}</h3>
+
+      {obs.subtitle && <p className="card-subtitle">{obs.subtitle}</p>}
+
+      {obs.text && (
+        <div className="card-content">
+          <p>{obs.text}</p>
+        </div>
+      )}
+
+      {obs.narrative && (
+        <div className="card-section">
+          <span className="card-section-label">Narrativa</span>
+          <p>{obs.narrative}</p>
+        </div>
+      )}
+
+      {obs.facts && (
+        <div className="card-section">
+          <span className="card-section-label">Fatti</span>
+          <p>{obs.facts}</p>
+        </div>
+      )}
+
+      {/* File modificati / letti */}
+      {(obs.files_modified || obs.files_read) && (
+        <div className="card-files">
+          {obs.files_modified && (
+            <span className="file-pill file-pill--modified" title="File modificati">
+              ✎ {obs.files_modified.split(',').length} file
+            </span>
+          )}
+          {obs.files_read && (
+            <span className="file-pill file-pill--read" title="File letti">
+              ◉ {obs.files_read.split(',').length} file
+            </span>
+          )}
+        </div>
+      )}
+
+      {/* Concetti come pill tag */}
+      {obs.concepts && (
         <div className="card-tags">
-          {observation.concepts.split(', ').map((concept, i) => (
+          {obs.concepts.split(', ').map((concept, i) => (
             <span key={i} className="tag">{concept}</span>
           ))}
         </div>
@@ -71,50 +120,69 @@ function ObservationCard({ observation }: { observation: Observation }) {
   );
 }
 
+/* ── Card Summary ── */
 function SummaryCard({ summary }: { summary: Summary }) {
   return (
-    <div className="card summary-card">
+    <div className="card card--summary">
       <div className="card-header">
-        <span className="card-type">Summary</span>
+        <span className="badge badge--summary">summary</span>
         <span className="card-project">{summary.project}</span>
-        <span className="card-date">
-          {new Date(summary.created_at).toLocaleString()}
-        </span>
+        <span className="card-time">{timeAgo(summary.created_at_epoch)}</span>
       </div>
+
       {summary.request && <h3 className="card-title">{summary.request}</h3>}
+
+      {summary.investigated && (
+        <div className="card-section">
+          <span className="card-section-label">Indagato</span>
+          <p>{summary.investigated}</p>
+        </div>
+      )}
+
       {summary.learned && (
-        <div className="summary-section">
-          <strong>Learned:</strong>
+        <div className="card-section">
+          <span className="card-section-label">Appreso</span>
           <p>{summary.learned}</p>
         </div>
       )}
+
       {summary.completed && (
-        <div className="summary-section">
-          <strong>Completed:</strong>
+        <div className="card-section">
+          <span className="card-section-label">Completato</span>
           <p>{summary.completed}</p>
         </div>
       )}
+
       {summary.next_steps && (
-        <div className="summary-section">
-          <strong>Next Steps:</strong>
+        <div className="card-section">
+          <span className="card-section-label">Prossimi passi</span>
           <p>{summary.next_steps}</p>
+        </div>
+      )}
+
+      {summary.notes && (
+        <div className="card-section">
+          <span className="card-section-label">Note</span>
+          <p>{summary.notes}</p>
         </div>
       )}
     </div>
   );
 }
 
+/* ── Card Prompt ── */
 function PromptCard({ prompt }: { prompt: UserPrompt }) {
   return (
-    <div className="card prompt-card">
+    <div className="card card--prompt">
       <div className="card-header">
-        <span className="card-type">Prompt #{prompt.prompt_number}</span>
+        <span className="badge badge--prompt">prompt #{prompt.prompt_number}</span>
         <span className="card-project">{prompt.project}</span>
-        <span className="card-date">
-          {new Date(prompt.created_at).toLocaleString()}
-        </span>
+        <span className="card-time">{timeAgo(prompt.created_at_epoch)}</span>
       </div>
-      <p className="card-content">{prompt.prompt_text}</p>
+
+      <div className="card-content card-content--mono">
+        <p>{prompt.prompt_text}</p>
+      </div>
     </div>
   );
 }
