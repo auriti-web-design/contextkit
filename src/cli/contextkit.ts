@@ -5,7 +5,7 @@
 
 import { createContextKit } from '../sdk/index.js';
 import { execSync } from 'child_process';
-import { existsSync, mkdirSync, readFileSync, writeFileSync, copyFileSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'fs';
 import { join, dirname } from 'path';
 import { homedir, platform, release } from 'os';
 import { fileURLToPath } from 'url';
@@ -18,10 +18,61 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 // __dirname = .../plugin/dist/cli → risali per ottenere plugin/dist
 const DIST_DIR = dirname(__dirname);
-// Risali per ottenere la root del progetto (plugin/dist → plugin → root)
-const PROJECT_ROOT = dirname(dirname(DIST_DIR));
 
-// ─── Utilità diagnostica ambiente ───
+// ─── Embedded templates (included in the npm package, no external files needed) ───
+
+/** Agent config template — __DIST_DIR__ is replaced at install time */
+const AGENT_TEMPLATE = JSON.stringify({
+  name: "contextkit-memory",
+  description: "Agent with persistent cross-session memory. Uses ContextKit to remember context from previous sessions and automatically save what it learns.",
+  model: "claude-sonnet-4",
+  tools: ["read", "write", "shell", "glob", "grep", "web_search", "web_fetch", "@contextkit"],
+  mcpServers: {
+    contextkit: {
+      command: "node",
+      args: ["__DIST_DIR__/servers/mcp-server.js"]
+    }
+  },
+  hooks: {
+    agentSpawn: [{ command: "node __DIST_DIR__/hooks/agentSpawn.js", timeout_ms: 10000 }],
+    userPromptSubmit: [{ command: "node __DIST_DIR__/hooks/userPromptSubmit.js", timeout_ms: 5000 }],
+    postToolUse: [{ command: "node __DIST_DIR__/hooks/postToolUse.js", matcher: "*", timeout_ms: 5000 }],
+    stop: [{ command: "node __DIST_DIR__/hooks/stop.js", timeout_ms: 10000 }]
+  },
+  resources: ["file://.kiro/steering/contextkit.md"]
+}, null, 2);
+
+/** Steering file content — embedded directly */
+const STEERING_CONTENT = `# ContextKit - Persistent Memory
+
+You have access to ContextKit, a persistent cross-session memory system.
+
+## Available MCP Tools
+
+### @contextkit/search
+Search previous session memory. Use when:
+- The user mentions past work
+- You need context on previous decisions
+- You want to check if a problem was already addressed
+
+### @contextkit/get_context
+Retrieve recent context for the current project. Use at the start of complex tasks to understand what was done before.
+
+### @contextkit/timeline
+Show chronological context around an observation. Use to understand the sequence of events.
+
+### @contextkit/get_observations
+Retrieve full details of specific observations. Use after \`search\` to drill down.
+
+## Behavior
+
+- Previous session context is automatically injected at startup
+- Your actions (files written, commands run) are tracked automatically
+- A summary is generated at the end of each session
+- No manual saving needed: the system is fully automatic
+`;
+
+// ─── Environment diagnostics ───
 
 interface CheckResult {
   name: string;
@@ -30,7 +81,7 @@ interface CheckResult {
   fix?: string;
 }
 
-/** Rileva se siamo in WSL */
+/** Detect if running inside WSL */
 function isWSL(): boolean {
   try {
     const rel = release().toLowerCase();
@@ -45,7 +96,7 @@ function isWSL(): boolean {
   }
 }
 
-/** Verifica se un comando è disponibile nel PATH */
+/** Check if a command is available in PATH */
 function commandExists(cmd: string): boolean {
   try {
     execSync(`which ${cmd}`, { stdio: 'ignore' });
@@ -55,7 +106,13 @@ function commandExists(cmd: string): boolean {
   }
 }
 
-/** Esegue tutti i check di ambiente e restituisce i risultati */
+/** Detect if a path points to the Windows filesystem */
+function isWindowsPath(p: string): boolean {
+  return p.startsWith('/mnt/c') || p.startsWith('/mnt/d')
+    || /^[A-Za-z]:[\\\/]/.test(p);
+}
+
+/** Run all environment checks and return results */
 function runEnvironmentChecks(): CheckResult[] {
   const checks: CheckResult[] = [];
   const wsl = isWSL();
@@ -63,47 +120,48 @@ function runEnvironmentChecks(): CheckResult[] {
   // 1. OS detection
   const os = platform();
   checks.push({
-    name: 'Sistema operativo',
+    name: 'Operating system',
     ok: os === 'linux' || os === 'darwin',
     message: os === 'linux'
       ? (wsl ? 'Linux (WSL)' : 'Linux')
-      : os === 'darwin' ? 'macOS' : `${os} (non supportato ufficialmente)`,
+      : os === 'darwin' ? 'macOS' : `${os} (not officially supported)`,
   });
 
-  // 2. WSL: Node non deve essere quello Windows (/mnt/c/)
+  // 2. WSL: Node must be native Linux (not Windows mounted via /mnt/c/)
   if (wsl) {
     const nodePath = process.execPath;
-    const nodeOnWindows = nodePath.startsWith('/mnt/c') || nodePath.startsWith('/mnt/d');
+    const nodeOnWindows = isWindowsPath(nodePath);
     checks.push({
-      name: 'WSL: Node.js nativo',
+      name: 'WSL: Native Node.js',
       ok: !nodeOnWindows,
       message: nodeOnWindows
-        ? `Node.js punta a Windows: ${nodePath}`
-        : `Node.js nativo Linux: ${nodePath}`,
+        ? `Node.js points to Windows: ${nodePath}`
+        : `Native Linux Node.js: ${nodePath}`,
       fix: nodeOnWindows
-        ? 'Installa Node.js dentro WSL:\n  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -\n  sudo apt-get install -y nodejs\n  Oppure usa nvm: https://github.com/nvm-sh/nvm'
+        ? 'Install Node.js inside WSL:\n  curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -\n  sudo apt-get install -y nodejs\n  Or use nvm: https://github.com/nvm-sh/nvm'
         : undefined,
     });
 
-    // 3. WSL: npm prefix non deve puntare a Windows
+    // 3. WSL: npm global prefix must not point to Windows
+    // npm may return paths in Linux format (/mnt/c/...) or Windows format (C:\...)
     try {
       const npmPrefix = execSync('npm prefix -g', { encoding: 'utf8' }).trim();
-      const prefixOnWindows = npmPrefix.startsWith('/mnt/c') || npmPrefix.startsWith('/mnt/d');
+      const prefixOnWindows = isWindowsPath(npmPrefix);
       checks.push({
         name: 'WSL: npm global prefix',
         ok: !prefixOnWindows,
         message: prefixOnWindows
-          ? `npm global prefix punta a Windows: ${npmPrefix}`
+          ? `npm global prefix points to Windows: ${npmPrefix}`
           : `npm global prefix: ${npmPrefix}`,
         fix: prefixOnWindows
-          ? 'Correggi il prefix npm:\n  mkdir -p ~/.npm-global\n  npm config set prefix ~/.npm-global\n  echo \'export PATH="$HOME/.npm-global/bin:$PATH"\' >> ~/.bashrc\n  source ~/.bashrc\n  Poi reinstalla: npm install -g kiro-memory'
+          ? 'Fix npm prefix:\n  mkdir -p ~/.npm-global\n  npm config set prefix ~/.npm-global\n  echo \'export PATH="$HOME/.npm-global/bin:$PATH"\' >> ~/.bashrc\n  source ~/.bashrc\n  Then reinstall: npm install -g kiro-memory'
           : undefined,
       });
     } catch {
       checks.push({
         name: 'WSL: npm global prefix',
         ok: false,
-        message: 'Impossibile determinare npm prefix',
+        message: 'Unable to determine npm prefix',
       });
     }
   }
@@ -115,21 +173,21 @@ function runEnvironmentChecks(): CheckResult[] {
     ok: nodeVersion >= 18,
     message: `Node.js v${process.versions.node}`,
     fix: nodeVersion < 18
-      ? 'Aggiorna Node.js:\n  nvm install 22 && nvm use 22\n  Oppure: https://nodejs.org/'
+      ? 'Upgrade Node.js:\n  nvm install 22 && nvm use 22\n  Or visit: https://nodejs.org/'
       : undefined,
   });
 
-  // 5. better-sqlite3 caricabile
+  // 5. better-sqlite3 loadable
   let sqliteOk = false;
   let sqliteMsg = '';
   try {
     require('better-sqlite3');
     sqliteOk = true;
-    sqliteMsg = 'Modulo nativo caricato correttamente';
+    sqliteMsg = 'Native module loaded successfully';
   } catch (err: any) {
     sqliteMsg = err.code === 'ERR_DLOPEN_FAILED'
-      ? 'Binario nativo incompatibile (ELF header invalido — probabile mismatch piattaforma)'
-      : `Errore: ${err.message}`;
+      ? 'Incompatible native binary (invalid ELF header — likely platform mismatch)'
+      : `Error: ${err.message}`;
   }
   checks.push({
     name: 'better-sqlite3',
@@ -137,12 +195,12 @@ function runEnvironmentChecks(): CheckResult[] {
     message: sqliteMsg,
     fix: !sqliteOk
       ? (wsl
-        ? 'In WSL, ricompila il modulo nativo:\n  npm rebuild better-sqlite3\n  Se non funziona, reinstalla:\n  npm install -g kiro-memory --build-from-source'
-        : 'Reinstalla il modulo nativo:\n  npm rebuild better-sqlite3')
+        ? 'In WSL, rebuild the native module:\n  npm rebuild better-sqlite3\n  If that fails, reinstall:\n  npm install -g kiro-memory --build-from-source'
+        : 'Rebuild the native module:\n  npm rebuild better-sqlite3')
       : undefined,
   });
 
-  // 6. Build tools (solo Linux/WSL — servono per compilare moduli nativi)
+  // 6. Build tools (Linux/WSL only — needed for native module compilation)
   if (os === 'linux') {
     const hasMake = commandExists('make');
     const hasGcc = commandExists('g++') || commandExists('gcc');
@@ -153,13 +211,13 @@ function runEnvironmentChecks(): CheckResult[] {
     if (!hasPython) missing.push('python3');
 
     checks.push({
-      name: 'Build tools (moduli nativi)',
+      name: 'Build tools (native modules)',
       ok: allPresent,
       message: allPresent
-        ? 'make, g++, python3 disponibili'
-        : `Mancanti: ${missing.join(', ')}`,
+        ? 'make, g++, python3 available'
+        : `Missing: ${missing.join(', ')}`,
       fix: !allPresent
-        ? `Installa i pacchetti richiesti:\n  sudo apt-get update && sudo apt-get install -y ${missing.join(' ')}\n  Poi reinstalla: npm install -g kiro-memory --build-from-source`
+        ? `Install required packages:\n  sudo apt-get update && sudo apt-get install -y ${missing.join(' ')}\n  Then reinstall: npm install -g kiro-memory --build-from-source`
         : undefined,
     });
   }
@@ -167,7 +225,7 @@ function runEnvironmentChecks(): CheckResult[] {
   return checks;
 }
 
-/** Stampa i risultati dei check in formato leggibile */
+/** Print check results in a readable format */
 function printChecks(checks: CheckResult[]): { hasErrors: boolean } {
   let hasErrors = false;
   console.log('');
@@ -188,55 +246,45 @@ function printChecks(checks: CheckResult[]): { hasErrors: boolean } {
   return { hasErrors };
 }
 
-// ─── Comando install ───
+// ─── Install command ───
 
 async function installKiro() {
-  console.log('\n=== Kiro Memory - Installazione ===\n');
-  console.log('[1/3] Diagnostica ambiente...');
+  console.log('\n=== Kiro Memory - Installation ===\n');
+  console.log('[1/3] Running environment checks...');
 
   const checks = runEnvironmentChecks();
   const { hasErrors } = printChecks(checks);
 
   if (hasErrors) {
-    console.log('\x1b[31mInstallazione annullata.\x1b[0m Risolvi i problemi sopra e riprova.');
-    console.log('Dopo aver risolto, esegui: kiro-memory install\n');
+    console.log('\x1b[31mInstallation aborted.\x1b[0m Fix the issues above and retry.');
+    console.log('After fixing, run: kiro-memory install\n');
     process.exit(1);
   }
 
-  // Rileva la directory dist (dove sono i file compilati)
+  // dist directory (where compiled files live)
   const distDir = DIST_DIR;
-  const agentTemplatePath = join(PROJECT_ROOT, 'kiro-agent', 'contextkit.json');
-  const steeringSourcePath = join(PROJECT_ROOT, 'kiro-agent', 'steering.md');
 
-  // Verifica che i file sorgente esistano
-  if (!existsSync(agentTemplatePath)) {
-    console.error(`\x1b[31mErrore:\x1b[0m Template agent non trovato: ${agentTemplatePath}`);
-    console.error('Prova a reinstallare: npm install -g kiro-memory');
-    process.exit(1);
-  }
-
-  // Directory di destinazione
+  // Destination directories
   const kiroDir = process.env.KIRO_CONFIG_DIR || join(homedir(), '.kiro');
   const agentsDir = join(kiroDir, 'agents');
   const settingsDir = join(kiroDir, 'settings');
   const steeringDir = join(kiroDir, 'steering');
   const dataDir = process.env.CONTEXTKIT_DATA_DIR || join(homedir(), '.contextkit');
 
-  console.log('[2/3] Installazione configurazione Kiro...\n');
+  console.log('[2/3] Installing Kiro configuration...\n');
 
-  // Crea directory
+  // Create directories
   for (const dir of [agentsDir, settingsDir, steeringDir, dataDir]) {
     mkdirSync(dir, { recursive: true });
   }
 
-  // Genera agent config con path assoluti
-  const agentTemplate = readFileSync(agentTemplatePath, 'utf8');
-  const agentConfig = agentTemplate.replace(/__CONTEXTKIT_DIST__/g, distDir);
+  // Generate agent config with absolute paths (from embedded template)
+  const agentConfig = AGENT_TEMPLATE.replace(/__DIST_DIR__/g, distDir);
   const agentDestPath = join(agentsDir, 'contextkit.json');
   writeFileSync(agentDestPath, agentConfig, 'utf8');
   console.log(`  → Agent config: ${agentDestPath}`);
 
-  // Aggiorna/crea mcp.json
+  // Update/create mcp.json
   const mcpFilePath = join(settingsDir, 'mcp.json');
   let mcpConfig: any = { mcpServers: {} };
 
@@ -245,7 +293,7 @@ async function installKiro() {
       mcpConfig = JSON.parse(readFileSync(mcpFilePath, 'utf8'));
       if (!mcpConfig.mcpServers) mcpConfig.mcpServers = {};
     } catch {
-      // File corrotto, sovrascriviamo
+      // Corrupted file, overwrite
     }
   }
 
@@ -256,44 +304,42 @@ async function installKiro() {
   writeFileSync(mcpFilePath, JSON.stringify(mcpConfig, null, 2), 'utf8');
   console.log(`  → MCP config:   ${mcpFilePath}`);
 
-  // Copia steering file
+  // Write steering file (from embedded content)
   const steeringDestPath = join(steeringDir, 'contextkit.md');
-  if (existsSync(steeringSourcePath)) {
-    copyFileSync(steeringSourcePath, steeringDestPath);
-    console.log(`  → Steering:     ${steeringDestPath}`);
-  }
+  writeFileSync(steeringDestPath, STEERING_CONTENT, 'utf8');
+  console.log(`  → Steering:     ${steeringDestPath}`);
 
   console.log(`  → Data dir:     ${dataDir}`);
 
-  // Riepilogo
-  console.log('\n[3/3] Installazione completata!\n');
-  console.log('Per usare Kiro con memoria persistente:');
+  // Summary
+  console.log('\n[3/3] Installation complete!\n');
+  console.log('To use Kiro with persistent memory:');
   console.log('  kiro-cli --agent contextkit-memory\n');
-  console.log('Per creare un alias permanente:');
+  console.log('To create a permanent alias:');
   console.log('  echo \'alias kiro="kiro-cli --agent contextkit-memory"\' >> ~/.bashrc');
   console.log('  source ~/.bashrc\n');
-  console.log('Il worker si avvia automaticamente alla prima sessione.');
-  console.log(`Dashboard web: http://localhost:3001\n`);
+  console.log('The worker starts automatically when a Kiro session begins.');
+  console.log(`Web dashboard: http://localhost:3001\n`);
 }
 
-// ─── Comando doctor ───
+// ─── Doctor command ───
 
 async function runDoctor() {
-  console.log('\n=== Kiro Memory - Diagnostica ===');
+  console.log('\n=== Kiro Memory - Diagnostics ===');
 
   const checks = runEnvironmentChecks();
 
-  // Check aggiuntivi sullo stato installazione
+  // Additional checks on installation status
   const kiroDir = process.env.KIRO_CONFIG_DIR || join(homedir(), '.kiro');
   const agentPath = join(kiroDir, 'agents', 'contextkit.json');
   const mcpPath = join(kiroDir, 'settings', 'mcp.json');
   const dataDir = process.env.CONTEXTKIT_DATA_DIR || join(homedir(), '.contextkit');
 
   checks.push({
-    name: 'Agent config Kiro',
+    name: 'Kiro agent config',
     ok: existsSync(agentPath),
-    message: existsSync(agentPath) ? agentPath : 'Non trovato',
-    fix: !existsSync(agentPath) ? 'Esegui: kiro-memory install' : undefined,
+    message: existsSync(agentPath) ? agentPath : 'Not found',
+    fix: !existsSync(agentPath) ? 'Run: kiro-memory install' : undefined,
   });
 
   let mcpOk = false;
@@ -304,19 +350,19 @@ async function runDoctor() {
     } catch {}
   }
   checks.push({
-    name: 'MCP server configurato',
+    name: 'MCP server configured',
     ok: mcpOk,
-    message: mcpOk ? 'contextkit registrato in mcp.json' : 'Non configurato',
-    fix: !mcpOk ? 'Esegui: kiro-memory install' : undefined,
+    message: mcpOk ? 'contextkit registered in mcp.json' : 'Not configured',
+    fix: !mcpOk ? 'Run: kiro-memory install' : undefined,
   });
 
   checks.push({
     name: 'Data directory',
     ok: existsSync(dataDir),
-    message: existsSync(dataDir) ? dataDir : 'Non creata (verrà creata al primo uso)',
+    message: existsSync(dataDir) ? dataDir : 'Not created (will be created on first use)',
   });
 
-  // Verifica porta worker (informativo, non bloccante)
+  // Worker status check (informational, non-blocking)
   let workerOk = false;
   try {
     const port = process.env.KIRO_MEMORY_WORKER_PORT || '3001';
@@ -328,17 +374,17 @@ async function runDoctor() {
   } catch {}
   checks.push({
     name: 'Worker service',
-    ok: true,  // Non bloccante: si avvia automaticamente
-    message: workerOk ? 'Attivo su porta 3001' : 'Non in esecuzione (si avvia automaticamente con Kiro)',
+    ok: true,  // Non-blocking: starts automatically with Kiro
+    message: workerOk ? 'Running on port 3001' : 'Not running (starts automatically with Kiro)',
   });
 
   const { hasErrors } = printChecks(checks);
 
   if (hasErrors) {
-    console.log('Alcuni check sono falliti. Risolvi i problemi indicati sopra.\n');
+    console.log('Some checks failed. Fix the issues listed above.\n');
     process.exit(1);
   } else {
-    console.log('Tutto OK! Kiro Memory è pronto.\n');
+    console.log('All good! Kiro Memory is ready.\n');
   }
 }
 
