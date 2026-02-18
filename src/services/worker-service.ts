@@ -1,0 +1,292 @@
+/**
+ * ContextKit Worker Service
+ * 
+ * Lightweight worker for processing context operations in background.
+ * Manages queue, health checks, and SSE broadcasting.
+ */
+
+import express from 'express';
+import cors from 'cors';
+import { join } from 'path';
+import { homedir } from 'os';
+import { existsSync, mkdirSync, writeFileSync, unlinkSync, readFileSync } from 'fs';
+import { ContextKitDatabase } from './sqlite/Database.js';
+import { logger } from '../utils/logger.js';
+import { DATA_DIR } from '../shared/paths.js';
+
+const PORT = process.env.CONTEXTKIT_WORKER_PORT || 3001;
+const HOST = process.env.CONTEXTKIT_WORKER_HOST || '127.0.0.1';
+const PID_FILE = join(DATA_DIR, 'worker.pid');
+
+// Ensure data directory exists
+if (!existsSync(DATA_DIR)) {
+  mkdirSync(DATA_DIR, { recursive: true });
+}
+
+// Initialize database
+const db = new ContextKitDatabase();
+logger.info('WORKER', 'Database initialized');
+
+// Express app
+const app = express();
+app.use(express.json());
+app.use(cors());
+
+// SSE clients
+const clients: express.Response[] = [];
+
+/**
+ * Broadcast event to all connected SSE clients
+ */
+function broadcast(event: string, data: any): void {
+  const message = `event: ${event}\ndata: ${JSON.stringify(data)}\n\n`;
+  clients.forEach(client => {
+    try {
+      client.write(message);
+    } catch (err) {
+      logger.warn('WORKER', 'Failed to broadcast to client', {}, err as Error);
+    }
+  });
+}
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'ok', 
+    timestamp: Date.now(),
+    version: '1.0.0'
+  });
+});
+
+// SSE endpoint
+app.get('/events', (req, res) => {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+  
+  clients.push(res);
+  logger.info('WORKER', 'SSE client connected', { clients: clients.length });
+  
+  // Send initial connection event
+  res.write(`event: connected\ndata: ${JSON.stringify({ timestamp: Date.now() })}\n\n`);
+  
+  req.on('close', () => {
+    const index = clients.indexOf(res);
+    if (index > -1) {
+      clients.splice(index, 1);
+    }
+    logger.info('WORKER', 'SSE client disconnected', { clients: clients.length });
+  });
+});
+
+// Get context for project
+app.get('/api/context/:project', (req, res) => {
+  const { project } = req.params;
+  
+  try {
+    const { getObservationsByProject } = require('./sqlite/Observations.js');
+    const { getSummariesByProject } = require('./sqlite/Summaries.js');
+    
+    const context = {
+      project,
+      observations: getObservationsByProject(db.db, project, 20),
+      summaries: getSummariesByProject(db.db, project, 5)
+    };
+    
+    res.json(context);
+  } catch (error) {
+    logger.error('WORKER', 'Failed to get context', { project }, error as Error);
+    res.status(500).json({ error: 'Failed to get context' });
+  }
+});
+
+// Store observation
+app.post('/api/observations', (req, res) => {
+  const { memorySessionId, project, type, title, content, concepts, files } = req.body;
+  
+  try {
+    const { createObservation } = require('./sqlite/Observations.js');
+    
+    const id = createObservation(
+      db.db,
+      memorySessionId || 'api-' + Date.now(),
+      project,
+      type || 'manual',
+      title,
+      null,
+      content,
+      null,
+      null,
+      concepts?.join(', ') || null,
+      files?.join(', ') || null,
+      null,
+      0
+    );
+    
+    broadcast('observation-created', { id, project, title });
+    
+    res.json({ id, success: true });
+  } catch (error) {
+    logger.error('WORKER', 'Failed to store observation', {}, error as Error);
+    res.status(500).json({ error: 'Failed to store observation' });
+  }
+});
+
+// Store summary
+app.post('/api/summaries', (req, res) => {
+  const { sessionId, project, request, learned, completed, nextSteps } = req.body;
+  
+  try {
+    const { createSummary } = require('./sqlite/Summaries.js');
+    
+    const id = createSummary(
+      db.db,
+      sessionId || 'api-' + Date.now(),
+      project,
+      request || null,
+      null,
+      learned || null,
+      completed || null,
+      nextSteps || null,
+      null
+    );
+    
+    broadcast('summary-created', { id, project });
+    
+    res.json({ id, success: true });
+  } catch (error) {
+    logger.error('WORKER', 'Failed to store summary', {}, error as Error);
+    res.status(500).json({ error: 'Failed to store summary' });
+  }
+});
+
+// Ricerca avanzata con FTS5 e filtri
+app.get('/api/search', (req, res) => {
+  const { q, project, type, limit } = req.query as { q: string; project?: string; type?: string; limit?: string };
+
+  if (!q) {
+    res.status(400).json({ error: 'Query parameter "q" is required' });
+    return;
+  }
+
+  try {
+    const { searchObservationsFTS } = require('./sqlite/Search.js');
+    const { searchSummariesFiltered } = require('./sqlite/Search.js');
+
+    const filters = {
+      project: project || undefined,
+      type: type || undefined,
+      limit: limit ? parseInt(limit, 10) : 20
+    };
+
+    const results = {
+      observations: searchObservationsFTS(db.db, q, filters),
+      summaries: searchSummariesFiltered(db.db, q, filters)
+    };
+
+    res.json(results);
+  } catch (error) {
+    logger.error('WORKER', 'Ricerca fallita', { query: q }, error as Error);
+    res.status(500).json({ error: 'Search failed' });
+  }
+});
+
+// Timeline: contesto cronologico attorno a un'osservazione
+app.get('/api/timeline', (req, res) => {
+  const { anchor, depth_before, depth_after } = req.query as { anchor: string; depth_before?: string; depth_after?: string };
+
+  if (!anchor) {
+    res.status(400).json({ error: 'Query parameter "anchor" is required' });
+    return;
+  }
+
+  try {
+    const { getTimeline } = require('./sqlite/Search.js');
+
+    const timeline = getTimeline(
+      db.db,
+      parseInt(anchor, 10),
+      depth_before ? parseInt(depth_before, 10) : 5,
+      depth_after ? parseInt(depth_after, 10) : 5
+    );
+
+    res.json({ timeline });
+  } catch (error) {
+    logger.error('WORKER', 'Timeline fallita', { anchor }, error as Error);
+    res.status(500).json({ error: 'Timeline failed' });
+  }
+});
+
+// Batch fetch osservazioni per ID
+app.post('/api/observations/batch', (req, res) => {
+  const { ids } = req.body;
+
+  if (!ids || !Array.isArray(ids)) {
+    res.status(400).json({ error: 'Body parameter "ids" (array) is required' });
+    return;
+  }
+
+  try {
+    const { getObservationsByIds } = require('./sqlite/Search.js');
+    const observations = getObservationsByIds(db.db, ids);
+    res.json({ observations });
+  } catch (error) {
+    logger.error('WORKER', 'Batch fetch fallito', { ids }, error as Error);
+    res.status(500).json({ error: 'Batch fetch failed' });
+  }
+});
+
+// Statistiche progetto
+app.get('/api/stats/:project', (req, res) => {
+  const { project } = req.params;
+
+  try {
+    const { getProjectStats } = require('./sqlite/Search.js');
+    const stats = getProjectStats(db.db, project);
+    res.json(stats);
+  } catch (error) {
+    logger.error('WORKER', 'Stats fallite', { project }, error as Error);
+    res.status(500).json({ error: 'Stats failed' });
+  }
+});
+
+// Start server
+const server = app.listen(Number(PORT), HOST, () => {
+  logger.info('WORKER', `ContextKit worker started on ${HOST}:${PORT}`);
+  
+  // Write PID file
+  writeFileSync(PID_FILE, String(process.pid), 'utf-8');
+});
+
+// Graceful shutdown
+function shutdown(signal: string): void {
+  logger.info('WORKER', `Received ${signal}, shutting down gracefully...`);
+  
+  server.close(() => {
+    logger.info('WORKER', 'Server closed');
+    
+    // Remove PID file
+    if (existsSync(PID_FILE)) {
+      unlinkSync(PID_FILE);
+    }
+    
+    // Close database
+    db.close();
+    
+    process.exit(0);
+  });
+}
+
+process.on('SIGTERM', () => shutdown('SIGTERM'));
+process.on('SIGINT', () => shutdown('SIGINT'));
+
+// Handle uncaught errors
+process.on('uncaughtException', (error) => {
+  logger.error('WORKER', 'Uncaught exception', {}, error);
+  shutdown('uncaughtException');
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('WORKER', 'Unhandled rejection', { reason }, reason as Error);
+});

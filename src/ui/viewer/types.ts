@@ -1,0 +1,53 @@
+/**
+ * ContextKit Viewer Types
+ */
+
+export interface Observation {
+  id: number;
+  memory_session_id: string;
+  project: string;
+  type: string;
+  title: string;
+  subtitle: string | null;
+  text: string | null;
+  narrative: string | null;
+  facts: string | null;
+  concepts: string | null;
+  files_read: string | null;
+  files_modified: string | null;
+  prompt_number: number;
+  created_at: string;
+  created_at_epoch: number;
+}
+
+export interface Summary {
+  id: number;
+  session_id: string;
+  project: string;
+  request: string | null;
+  investigated: string | null;
+  learned: string | null;
+  completed: string | null;
+  next_steps: string | null;
+  notes: string | null;
+  created_at: string;
+  created_at_epoch: number;
+}
+
+export interface UserPrompt {
+  id: number;
+  content_session_id: string;
+  project: string;
+  prompt_number: number;
+  prompt_text: string;
+  created_at: string;
+  created_at_epoch: number;
+}
+
+export interface ViewerSettings {
+  sidebarOpen: boolean;
+  selectedProject: string | null;
+  theme: 'light' | 'dark' | 'system';
+}
+
+export type ThemePreference = 'light' | 'dark' | 'system';

@@ -1,0 +1,50 @@
+datasets/
+node_modules/
+dist/
+*.log
+.DS_Store
+.env
+.env.local
+*.tmp
+*.temp
+.install-version
+.kiro/settings.local.json
+.kiro/agents/
+.kiro/skills/
+.kiro/plans/
+.kiro/worktrees/
+plugin/data/
+plugin/data.backup/
+bun.lock
+
+# SQLite database files
+*.db
+*.db-wal
+*.db-shm
+private/
+datasets/
+Auto Run Docs/
+
+# Generated UI files (built from viewer-template.html)
+src/ui/viewer.html
+
+# Local MCP server config (for development only)
+.mcp.json
+.cursor/
+
+# Prevent literal tilde directories (path validation bug artifacts)
+~*/
+
+# Prevent other malformed path directories
+http*/
+https*/
+
+# Ignore WebStorm project files (for dinosaur IDE users)
+.idea/
+
+# Session analysis logs
+*.txt
+
+# Local dev instructions (not for open-source repo)
+CLAUDE.md
+.kiro/context.md

@@ -1,0 +1,111 @@
+#!/usr/bin/env node
+/**
+ * Hook postToolUse per Kiro CLI
+ *
+ * Trigger: dopo l'esecuzione di ogni tool
+ * Funzione: salva un'osservazione con nome tool, input e output
+ */
+
+import { runHook, detectProject } from './utils.js';
+import { createContextKit } from '../sdk/index.js';
+
+runHook('postToolUse', async (input) => {
+  if (!input.tool_name) return;
+
+  // Ignora tool di basso valore per evitare rumore
+  const ignoredTools = ['glob', 'grep', 'fs_read', 'read', 'introspect', 'thinking', 'todo'];
+  if (ignoredTools.includes(input.tool_name)) return;
+
+  const project = detectProject(input.cwd);
+  const sdk = createContextKit({ project });
+
+  try {
+    // Costruisci titolo descrittivo
+    const title = buildTitle(input.tool_name, input.tool_input);
+
+    // Costruisci contenuto con input e output riassunti
+    const content = buildContent(input.tool_name, input.tool_input, input.tool_response);
+
+    // Determina tipo osservazione
+    const type = categorizeToolUse(input.tool_name);
+
+    // Estrai file coinvolti
+    const files = extractFiles(input.tool_input, input.tool_response);
+
+    await sdk.storeObservation({
+      type,
+      title,
+      content,
+      files
+    });
+  } finally {
+    sdk.close();
+  }
+});
+
+function buildTitle(toolName: string, toolInput: any): string {
+  if (!toolInput) return `Tool: ${toolName}`;
+
+  switch (toolName) {
+    case 'fs_write':
+    case 'write':
+      return `Scritto: ${toolInput.path || toolInput.file_path || 'file'}`;
+    case 'execute_bash':
+    case 'shell':
+      return `Eseguito: ${(toolInput.command || '').substring(0, 80)}`;
+    case 'web_search':
+      return `Cercato: ${toolInput.query || ''}`;
+    case 'web_fetch':
+      return `Fetch: ${toolInput.url || ''}`;
+    case 'delegate':
+    case 'use_subagent':
+      return `Delegato: ${toolInput.task || toolInput.prompt || ''}`.substring(0, 100);
+    default:
+      return `${toolName}: ${JSON.stringify(toolInput).substring(0, 80)}`;
+  }
+}
+
+function buildContent(toolName: string, toolInput: any, toolResponse: any): string {
+  let content = '';
+
+  if (toolInput) {
+    const inputStr = typeof toolInput === 'string' ? toolInput : JSON.stringify(toolInput);
+    content += `Input: ${inputStr.substring(0, 500)}\n`;
+  }
+
+  if (toolResponse) {
+    const respStr = typeof toolResponse === 'string' ? toolResponse : JSON.stringify(toolResponse);
+    content += `Output: ${respStr.substring(0, 500)}`;
+  }
+
+  return content || `Tool ${toolName} eseguito`;
+}
+
+function categorizeToolUse(toolName: string): string {
+  const categories: Record<string, string> = {
+    'fs_write': 'file-write',
+    'write': 'file-write',
+    'execute_bash': 'command',
+    'shell': 'command',
+    'web_search': 'research',
+    'web_fetch': 'research',
+    'delegate': 'delegation',
+    'use_subagent': 'delegation',
+    'use_aws': 'cloud-operation',
+    'aws': 'cloud-operation',
+    'code': 'code-intelligence'
+  };
+  return categories[toolName] || 'tool-use';
+}
+
+function extractFiles(toolInput: any, toolResponse: any): string[] {
+  const files: string[] = [];
+
+  if (toolInput?.path) files.push(toolInput.path);
+  if (toolInput?.file_path) files.push(toolInput.file_path);
+  if (toolInput?.paths && Array.isArray(toolInput.paths)) {
+    files.push(...toolInput.paths);
+  }
+
+  return [...new Set(files)]; // Deduplica
+}

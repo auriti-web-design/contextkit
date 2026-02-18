@@ -1,0 +1,42 @@
+{
+  "name": "contextkit-memory",
+  "description": "Agente con memoria persistente cross-sessione. Usa ContextKit per ricordare contesto da sessioni precedenti e salvare automaticamente ciò che impara.",
+  "model": "claude-sonnet-4",
+  "tools": ["read", "write", "shell", "glob", "grep", "web_search", "web_fetch", "@contextkit"],
+  "mcpServers": {
+    "contextkit": {
+      "command": "node",
+      "args": ["__CONTEXTKIT_DIST__/servers/mcp-server.js"]
+    }
+  },
+  "hooks": {
+    "agentSpawn": [
+      {
+        "command": "node __CONTEXTKIT_DIST__/hooks/agentSpawn.js",
+        "timeout_ms": 10000
+      }
+    ],
+    "userPromptSubmit": [
+      {
+        "command": "node __CONTEXTKIT_DIST__/hooks/userPromptSubmit.js",
+        "timeout_ms": 5000
+      }
+    ],
+    "postToolUse": [
+      {
+        "command": "node __CONTEXTKIT_DIST__/hooks/postToolUse.js",
+        "matcher": "*",
+        "timeout_ms": 5000
+      }
+    ],
+    "stop": [
+      {
+        "command": "node __CONTEXTKIT_DIST__/hooks/stop.js",
+        "timeout_ms": 10000
+      }
+    ]
+  },
+  "resources": [
+    "file://.kiro/steering/contextkit.md"
+  ]
+}
