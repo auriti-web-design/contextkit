@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 480 120" width="480" height="120">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0a0b10;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#13141f;stop-opacity:1" />
+    </linearGradient>
+    <linearGradient id="iconGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#7C5AFF" />
+      <stop offset="100%" style="stop-color:#3B82F6" />
+    </linearGradient>
+    <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#7C5AFF;stop-opacity:0.8" />
+      <stop offset="100%" style="stop-color:#3B82F6;stop-opacity:0.2" />
+    </linearGradient>
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="2.5" result="coloredBlur"/>
+      <feMerge>
+        <feMergeNode in="coloredBlur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <!-- Sfondo scuro arrotondato -->
+  <rect width="480" height="120" rx="16" fill="url(#bg)"/>
+
+  <!-- Icona: rete di nodi connessi -->
+  <g transform="translate(14, 12)">
+    <!-- Anello esterno -->
+    <circle cx="48" cy="48" r="44" fill="none" stroke="url(#ringGrad)" stroke-width="1.5" opacity="0.5"/>
+    <!-- Anello interno -->
+    <circle cx="48" cy="48" r="34" fill="none" stroke="#7C5AFF" stroke-width="0.8" opacity="0.25"/>
+
+    <!-- Nodo centrale -->
+    <circle cx="48" cy="48" r="14" fill="#0f1020" filter="url(#glow)"/>
+    <circle cx="48" cy="48" r="12" fill="none" stroke="url(#iconGrad)" stroke-width="1.8" opacity="0.9"/>
+    <circle cx="48" cy="48" r="5" fill="url(#iconGrad)" opacity="0.9"/>
+
+    <!-- Nodi satellite (orbitanti, opacita decrescente) -->
+    <circle cx="48" cy="4" r="3" fill="#7C5AFF" opacity="1.0"/>
+    <circle cx="82" cy="26" r="2.5" fill="#6366F1" opacity="0.7"/>
+    <circle cx="82" cy="70" r="2" fill="#3B82F6" opacity="0.5"/>
+    <circle cx="48" cy="92" r="1.5" fill="#2563EB" opacity="0.3"/>
+    <circle cx="14" cy="70" r="1" fill="#1D4ED8" opacity="0.2"/>
+
+    <!-- Connessioni tratteggiate dai nodi al centro -->
+    <line x1="48" y1="7" x2="48" y2="34" stroke="#7C5AFF" stroke-width="0.8" opacity="0.3" stroke-dasharray="2 3"/>
+    <line x1="79" y1="28" x2="58" y2="42" stroke="#6366F1" stroke-width="0.8" opacity="0.25" stroke-dasharray="2 3"/>
+    <line x1="79" y1="68" x2="58" y2="54" stroke="#3B82F6" stroke-width="0.8" opacity="0.2" stroke-dasharray="2 3"/>
+  </g>
+
+  <!-- Testo: KIRO -->
+  <text x="118" y="52" font-family="'Inter', -apple-system, sans-serif"
+        font-size="36" font-weight="800" fill="#e2e8f0" letter-spacing="3">KIRO</text>
+
+  <!-- Testo: MEMORY -->
+  <text x="222" y="52" font-family="'Inter', -apple-system, sans-serif"
+        font-size="36" font-weight="800" fill="url(#iconGrad)" letter-spacing="3">MEMORY</text>
+
+  <!-- Sottotitolo -->
+  <text x="118" y="74" font-family="'Inter', -apple-system, sans-serif"
+        font-size="12" fill="#94a3b8" letter-spacing="1">MEMORY FOR AI AGENTS</text>
+
+  <!-- Linea decorativa -->
+  <line x1="118" y1="83" x2="460" y2="83" stroke="#7C5AFF" stroke-width="0.5" opacity="0.25"/>
+
+  <!-- Rete neurale decorativa -->
+  <path d="M 118 95 Q 180 89 260 96 Q 340 103 400 97 Q 440 95 460 96"
+        fill="none" stroke="url(#iconGrad)" stroke-width="1" opacity="0.3" stroke-dasharray="3,3"/>
+</svg>

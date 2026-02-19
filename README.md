@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/logo.svg" alt="Kiro Memory" width="400" />
+  <img src="assets/banner.svg" alt="Kiro Memory" width="480" />
 </p>
 
 <p align="center">
