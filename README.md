@@ -1,10 +1,16 @@
-# Kiro Memory
+<p align="center">
+  <img src="assets/logo.svg" alt="Kiro Memory" width="400" />
+</p>
 
-**Persistent cross-session memory for [Kiro CLI](https://kiro.dev/).**
+<p align="center">
+  <strong>Persistent cross-session memory for <a href="https://kiro.dev/">Kiro CLI</a>.</strong>
+</p>
 
-![npm](https://img.shields.io/npm/v/kiro-memory)
-![License](https://img.shields.io/badge/license-AGPL--3.0-blue)
-![Node](https://img.shields.io/badge/node-%3E%3D18-green)
+<p align="center">
+  <a href="https://www.npmjs.com/package/kiro-memory"><img src="https://img.shields.io/npm/v/kiro-memory" alt="npm" /></a>
+  <img src="https://img.shields.io/badge/license-AGPL--3.0-blue" alt="License" />
+  <img src="https://img.shields.io/badge/node-%3E%3D18-green" alt="Node" />
+</p>
 
 ---
 
