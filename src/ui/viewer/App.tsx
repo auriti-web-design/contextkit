@@ -4,11 +4,11 @@ import { Sidebar } from './components/Sidebar';
 import { Feed } from './components/Feed';
 import { useSSE } from './hooks/useSSE';
 import { useTheme } from './hooks/useTheme';
+import { useProjectAliases } from './hooks/useProjectAliases';
 import { Observation, Summary, UserPrompt } from './types';
 import { mergeAndDeduplicateByProject } from './utils/data';
 
-// Tipi di osservazione per i filtri
-const TYPE_FILTERS = ['file-write', 'command', 'research', 'delegation', 'tool-use'] as const;
+const TYPE_FILTERS = ['file-write', 'file-read', 'command', 'research', 'delegation', 'tool-use'] as const;
 
 export function App() {
   const [currentFilter, setCurrentFilter] = useState('');
@@ -21,6 +21,7 @@ export function App() {
 
   const { observations, summaries, prompts, projects, isConnected } = useSSE();
   const { resolvedTheme, setThemePreference } = useTheme();
+  const { getDisplayName, updateAlias } = useProjectAliases();
 
   // Merge dati SSE live con dati paginati
   const allObservations = useMemo(() => {
@@ -51,7 +52,6 @@ export function App() {
     prompts: allPrompts.length
   }), [allObservations, allSummaries, allPrompts]);
 
-  // Toggle filtro tipo
   const toggleType = useCallback((type: string) => {
     setActiveTypes(prev => {
       const next = new Set(prev);
@@ -61,17 +61,42 @@ export function App() {
     });
   }, []);
 
-  // Caricamento paginato
+  // Fetch paginato per progetto specifico
+  const fetchForProject = useCallback(async (project: string) => {
+    setIsLoadingMore(true);
+    try {
+      const params = new URLSearchParams({
+        offset: '0',
+        limit: '30',
+        ...(project && { project })
+      });
+
+      const [obsRes, sumRes, promptRes] = await Promise.all([
+        fetch(`/api/observations?${params}`),
+        fetch(`/api/summaries?${params}`),
+        fetch(`/api/prompts?${params}`)
+      ]);
+
+      if (obsRes.ok) setPaginatedObservations(await obsRes.json());
+      if (sumRes.ok) setPaginatedSummaries(await sumRes.json());
+      if (promptRes.ok) setPaginatedPrompts(await promptRes.json());
+    } catch (error) {
+      console.error('Failed to load data:', error);
+    } finally {
+      setIsLoadingMore(false);
+    }
+  }, []);
+
+  // Caricamento paginato incrementale
   const handleLoadMore = useCallback(async () => {
     if (isLoadingMore) return;
     setIsLoadingMore(true);
 
     try {
       const offset = paginatedObservations.length;
-      const limit = 20;
       const params = new URLSearchParams({
         offset: String(offset),
-        limit: String(limit),
+        limit: '20',
         ...(currentFilter && { project: currentFilter })
       });
 
@@ -99,49 +124,93 @@ export function App() {
         setPaginatedPrompts(prev => [...prev, ...newPrompts]);
       }
 
-      // Se non ci sono nuovi risultati, non ci sono più dati
       if (newItems === 0) setHasMore(false);
     } catch (error) {
-      console.error('Errore caricamento dati:', error);
+      console.error('Failed to load more data:', error);
     } finally {
       setIsLoadingMore(false);
     }
   }, [currentFilter, paginatedObservations.length, isLoadingMore]);
 
-  // Reset quando cambia il filtro progetto
+  // Reset + fetch automatico quando cambia il filtro progetto
   useEffect(() => {
     setPaginatedObservations([]);
     setPaginatedSummaries([]);
     setPaginatedPrompts([]);
     setHasMore(true);
-  }, [currentFilter]);
+
+    if (currentFilter) {
+      fetchForProject(currentFilter);
+    }
+  }, [currentFilter, fetchForProject]);
 
   return (
-    <div className="app" data-theme={resolvedTheme}>
+    <div className="h-screen overflow-hidden flex flex-col bg-surface-0">
+      {/* Header */}
       <Header
         isConnected={isConnected}
         resolvedTheme={resolvedTheme}
         onThemeToggle={() => setThemePreference(resolvedTheme === 'dark' ? 'light' : 'dark')}
       />
 
-      <Sidebar
-        projects={projects}
-        currentFilter={currentFilter}
-        onFilterChange={setCurrentFilter}
-        activeTypes={activeTypes}
-        onToggleType={toggleType}
-        stats={stats}
-      />
+      {/* Content */}
+      <div className="flex flex-1 overflow-hidden">
+        {/* Sidebar */}
+        <div className="hidden md:flex w-[260px] flex-shrink-0">
+          <Sidebar
+            projects={projects}
+            currentFilter={currentFilter}
+            onFilterChange={setCurrentFilter}
+            activeTypes={activeTypes}
+            onToggleType={toggleType}
+            stats={stats}
+            getDisplayName={getDisplayName}
+            onRenameProject={updateAlias}
+          />
+        </div>
 
-      <div className="main">
-        <Feed
-          observations={filteredObservations}
-          summaries={allSummaries}
-          prompts={allPrompts}
-          onLoadMore={handleLoadMore}
-          isLoading={isLoadingMore}
-          hasMore={hasMore}
-        />
+        {/* Main feed */}
+        <main className="flex-1 overflow-y-auto bg-surface-0">
+          <div className="max-w-3xl mx-auto px-6 py-6">
+            {/* Filtro attivo */}
+            {currentFilter && (
+              <div className="flex items-center gap-3 mb-6 animate-fade-in">
+                <div className="flex items-center gap-3">
+                  <div className="w-9 h-9 rounded-lg bg-accent-violet/15 flex items-center justify-center">
+                    <span className="text-xs font-bold text-accent-violet">
+                      {getDisplayName(currentFilter).substring(0, 2).toUpperCase()}
+                    </span>
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold text-zinc-100">{getDisplayName(currentFilter)}</h2>
+                    {currentFilter !== getDisplayName(currentFilter) && (
+                      <span className="text-[11px] font-mono text-zinc-600">{currentFilter}</span>
+                    )}
+                  </div>
+                </div>
+                <button
+                  onClick={() => setCurrentFilter('')}
+                  className="ml-auto flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-300 transition-colors px-3 py-1.5 rounded-lg hover:bg-surface-2 border border-transparent hover:border-border"
+                >
+                  <svg className="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                    <path d="M18 6 6 18M6 6l12 12" />
+                  </svg>
+                  Clear filter
+                </button>
+              </div>
+            )}
+
+            <Feed
+              observations={filteredObservations}
+              summaries={allSummaries}
+              prompts={allPrompts}
+              onLoadMore={handleLoadMore}
+              isLoading={isLoadingMore}
+              hasMore={hasMore}
+              getDisplayName={getDisplayName}
+            />
+          </div>
+        </main>
       </div>
     </div>
   );

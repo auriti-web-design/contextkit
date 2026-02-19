@@ -381,6 +381,23 @@ class MigrationRunner {
           db.run('CREATE INDEX IF NOT EXISTS idx_summaries_epoch ON summaries(created_at_epoch)');
           db.run('CREATE INDEX IF NOT EXISTS idx_prompts_project ON prompts(project)');
         }
+      },
+      {
+        version: 3,
+        up: (db) => {
+          // Tabella alias per rinominare i progetti nella UI
+          db.run(`
+            CREATE TABLE IF NOT EXISTS project_aliases (
+              id INTEGER PRIMARY KEY AUTOINCREMENT,
+              project_name TEXT NOT NULL UNIQUE,
+              display_name TEXT NOT NULL,
+              created_at TEXT NOT NULL,
+              updated_at TEXT NOT NULL
+            )
+          `);
+
+          db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_project_aliases_name ON project_aliases(project_name)');
+        }
       }
     ];
   }

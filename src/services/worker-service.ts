@@ -324,6 +324,47 @@ app.get('/api/prompts', (req, res) => {
   }
 });
 
+// GET project aliases
+app.get('/api/project-aliases', (_req, res) => {
+  try {
+    const stmt = db.db.query('SELECT project_name, display_name FROM project_aliases');
+    const rows = stmt.all() as { project_name: string; display_name: string }[];
+    const aliases: Record<string, string> = {};
+    for (const row of rows) {
+      aliases[row.project_name] = row.display_name;
+    }
+    res.json(aliases);
+  } catch (error) {
+    logger.error('WORKER', 'Failed to list project aliases', {}, error as Error);
+    res.status(500).json({ error: 'Failed to list project aliases' });
+  }
+});
+
+// PUT project alias (crea o aggiorna)
+app.put('/api/project-aliases/:project', (req, res) => {
+  const { project } = req.params;
+  const { displayName } = req.body;
+
+  if (!displayName || typeof displayName !== 'string') {
+    res.status(400).json({ error: 'Field "displayName" (string) is required' });
+    return;
+  }
+
+  try {
+    const now = new Date().toISOString();
+    const stmt = db.db.query(`
+      INSERT INTO project_aliases (project_name, display_name, created_at, updated_at)
+      VALUES (?, ?, ?, ?)
+      ON CONFLICT(project_name) DO UPDATE SET display_name = excluded.display_name, updated_at = excluded.updated_at
+    `);
+    stmt.run(project, displayName.trim(), now, now);
+    res.json({ ok: true, project_name: project, display_name: displayName.trim() });
+  } catch (error) {
+    logger.error('WORKER', 'Failed to update project alias', { project }, error as Error);
+    res.status(500).json({ error: 'Failed to update project alias' });
+  }
+});
+
 // Lista progetti distinti
 app.get('/api/projects', (_req, res) => {
   try {

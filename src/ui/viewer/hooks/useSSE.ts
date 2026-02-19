@@ -10,8 +10,7 @@ interface SSEState {
 }
 
 /**
- * Hook SSE con auto-reconnect e fetch iniziale completo
- * (inclusi prompts, mancanti nella versione precedente).
+ * Hook SSE con auto-reconnect e fetch iniziale completo.
  */
 export function useSSE(): SSEState {
   const [state, setState] = useState<SSEState>({
@@ -22,7 +21,6 @@ export function useSSE(): SSEState {
     isConnected: false
   });
 
-  // Ref per evitare cleanup race condition
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -30,7 +28,7 @@ export function useSSE(): SSEState {
     let eventSource: EventSource | null = null;
     let retryTimeout: ReturnType<typeof setTimeout> | null = null;
     let retryCount = 0;
-    const MAX_RETRY_DELAY = 30000; // 30s max
+    const MAX_RETRY_DELAY = 30000;
 
     /* ── Fetch helpers ── */
     const fetchObservations = async () => {
@@ -41,7 +39,7 @@ export function useSSE(): SSEState {
           setState(prev => ({ ...prev, observations }));
         }
       } catch (err) {
-        console.error('Fetch observations fallito:', err);
+        console.error('Failed to fetch observations:', err);
       }
     };
 
@@ -53,7 +51,7 @@ export function useSSE(): SSEState {
           setState(prev => ({ ...prev, summaries }));
         }
       } catch (err) {
-        console.error('Fetch summaries fallito:', err);
+        console.error('Failed to fetch summaries:', err);
       }
     };
 
@@ -65,7 +63,7 @@ export function useSSE(): SSEState {
           setState(prev => ({ ...prev, prompts }));
         }
       } catch (err) {
-        console.error('Fetch prompts fallito:', err);
+        console.error('Failed to fetch prompts:', err);
       }
     };
 
@@ -77,11 +75,11 @@ export function useSSE(): SSEState {
           setState(prev => ({ ...prev, projects }));
         }
       } catch (err) {
-        console.error('Fetch projects fallito:', err);
+        console.error('Failed to fetch projects:', err);
       }
     };
 
-    /* ── Connessione SSE con backoff ── */
+    /* ── SSE con exponential backoff ── */
     const connect = () => {
       if (!mountedRef.current) return;
 
@@ -89,7 +87,7 @@ export function useSSE(): SSEState {
 
       eventSource.onopen = () => {
         if (!mountedRef.current) return;
-        retryCount = 0; // Reset backoff dopo connessione riuscita
+        retryCount = 0;
         setState(prev => ({ ...prev, isConnected: true }));
       };
 
@@ -97,7 +95,6 @@ export function useSSE(): SSEState {
         if (!mountedRef.current) return;
         setState(prev => ({ ...prev, isConnected: false }));
 
-        // Chiudi connessione rotta e schedula retry
         eventSource?.close();
         eventSource = null;
 
@@ -106,17 +103,15 @@ export function useSSE(): SSEState {
         retryTimeout = setTimeout(connect, delay);
       };
 
-      // Quando arriva una nuova osservazione, ri-fetch la lista
       eventSource.addEventListener('observation-created', () => {
         fetchObservations();
-        fetchProjects(); // Potrebbe essere un nuovo progetto
+        fetchProjects();
       });
 
       eventSource.addEventListener('summary-created', () => {
         fetchSummaries();
       });
 
-      // Listener mancante nella versione precedente
       eventSource.addEventListener('prompt-created', () => {
         fetchPrompts();
       });

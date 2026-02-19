@@ -1,10 +1,15 @@
 import { useState, useEffect } from 'react';
 import { ThemePreference } from '../types';
 
+/**
+ * Hook per gestione tema con supporto dark class su <html>.
+ * Default: dark mode (per evitare flash di light theme).
+ */
 export function useTheme() {
-  const [preference, setPreference] = useState<ThemePreference>('system');
-  const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark'>('light');
+  const [preference, setPreference] = useState<ThemePreference>('dark');
+  const [resolvedTheme, setResolvedTheme] = useState<'light' | 'dark'>('dark');
 
+  // Carica preferenza salvata
   useEffect(() => {
     const saved = localStorage.getItem('kiro-memory-theme') as ThemePreference;
     if (saved) {
@@ -12,23 +17,39 @@ export function useTheme() {
     }
   }, []);
 
+  // Risolvi tema e applica classe `dark` su <html>
   useEffect(() => {
-    const resolveTheme = () => {
-      if (preference === 'system') {
-        const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-        setResolvedTheme(prefersDark ? 'dark' : 'light');
-      } else {
-        setResolvedTheme(preference);
-      }
-    };
+    let resolved: 'light' | 'dark';
 
-    resolveTheme();
+    if (preference === 'system') {
+      const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
+      resolved = prefersDark ? 'dark' : 'light';
+    } else {
+      resolved = preference;
+    }
 
-    // Listen for system theme changes
+    setResolvedTheme(resolved);
+
+    // Sincronizza classe dark su <html> per Tailwind
+    if (resolved === 'dark') {
+      document.documentElement.classList.add('dark');
+    } else {
+      document.documentElement.classList.remove('dark');
+    }
+  }, [preference]);
+
+  // Listener per cambio tema di sistema
+  useEffect(() => {
     const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
     const handler = (e: MediaQueryListEvent) => {
       if (preference === 'system') {
-        setResolvedTheme(e.matches ? 'dark' : 'light');
+        const resolved = e.matches ? 'dark' : 'light';
+        setResolvedTheme(resolved);
+        if (resolved === 'dark') {
+          document.documentElement.classList.add('dark');
+        } else {
+          document.documentElement.classList.remove('dark');
+        }
       }
     };
 

@@ -44,6 +44,11 @@ export interface UserPrompt {
   created_at_epoch: number;
 }
 
+export interface ProjectAlias {
+  project_name: string;
+  display_name: string;
+}
+
 export interface ViewerSettings {
   sidebarOpen: boolean;
   selectedProject: string | null;
