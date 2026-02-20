@@ -7,9 +7,15 @@
  * - Exit code 0 = successo, 2 = blocco (stderr inviato all'LLM)
  */
 
-import { writeFileSync, mkdirSync, existsSync } from 'fs';
+import { writeFileSync, mkdirSync, existsSync, readFileSync } from 'fs';
 import { join } from 'path';
 import type { KiroHookInput } from '../types/worker-types.js';
+
+// Percorso del token condiviso con il worker
+const DATA_DIR = process.env.KIRO_MEMORY_DATA_DIR
+  || process.env.CONTEXTKIT_DATA_DIR
+  || join(process.env.HOME || '/tmp', '.kiro-memory');
+const TOKEN_FILE = join(DATA_DIR, 'worker.token');
 
 /**
  * Logging di debug per gli hook (attivo solo con KIRO_MEMORY_LOG_LEVEL=DEBUG)
@@ -128,11 +134,23 @@ export async function notifyWorker(event: string, data?: Record<string, unknown>
   const host = process.env.KIRO_MEMORY_WORKER_HOST || '127.0.0.1';
   const port = process.env.KIRO_MEMORY_WORKER_PORT || '3001';
   try {
+    // Leggi token di autenticazione condiviso con il worker
+    let token = '';
+    try {
+      token = readFileSync(TOKEN_FILE, 'utf-8').trim();
+    } catch {
+      // Token non trovato: il worker potrebbe non essere attivo
+      return;
+    }
+
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), 1500);
     await fetch(`http://${host}:${port}/api/notify`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Worker-Token': token
+      },
       body: JSON.stringify({ event, data: data || {} }),
       signal: controller.signal
     });

@@ -56,6 +56,15 @@ export class KiroMemoryDatabase {
   }
 
   /**
+   * Esegue una funzione all'interno di una transazione atomica.
+   * Se fn() lancia un errore, la transazione viene annullata automaticamente.
+   */
+  withTransaction<T>(fn: (db: Database) => T): T {
+    const transaction = this.db.transaction(fn);
+    return transaction(this.db);
+  }
+
+  /**
    * Close the database connection
    */
   close(): void {
@@ -426,6 +435,9 @@ export async function initializeDatabase(): Promise<Database> {
   const manager = DatabaseManager.getInstance();
   return await manager.initialize();
 }
+
+// Alias backward-compat per i test e codice legacy
+export { KiroMemoryDatabase as ContextKitDatabase };
 
 // Re-export bun:sqlite Database type
 export { Database };

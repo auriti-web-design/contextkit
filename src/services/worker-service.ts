@@ -7,9 +7,12 @@
 
 import express from 'express';
 import cors from 'cors';
+import helmet from 'helmet';
+import rateLimit from 'express-rate-limit';
+import crypto from 'crypto';
 import { join, dirname } from 'path';
 import { homedir } from 'os';
-import { existsSync, mkdirSync, writeFileSync, unlinkSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, unlinkSync, readFileSync, chmodSync } from 'fs';
 import { fileURLToPath } from 'url';
 import { KiroMemoryDatabase } from './sqlite/Database.js';
 import { getObservationsByProject, createObservation } from './sqlite/Observations.js';
@@ -24,22 +27,85 @@ const __worker_dirname = dirname(fileURLToPath(import.meta.url));
 const PORT = process.env.KIRO_MEMORY_WORKER_PORT || process.env.CONTEXTKIT_WORKER_PORT || 3001;
 const HOST = process.env.KIRO_MEMORY_WORKER_HOST || process.env.CONTEXTKIT_WORKER_HOST || '127.0.0.1';
 const PID_FILE = join(DATA_DIR, 'worker.pid');
+const TOKEN_FILE = join(DATA_DIR, 'worker.token');
+const MAX_SSE_CLIENTS = 50;
 
 // Ensure data directory exists
 if (!existsSync(DATA_DIR)) {
   mkdirSync(DATA_DIR, { recursive: true });
 }
 
+// Genera token di autenticazione per comunicazione hook→worker
+const WORKER_TOKEN = crypto.randomBytes(32).toString('hex');
+writeFileSync(TOKEN_FILE, WORKER_TOKEN, 'utf-8');
+try { chmodSync(TOKEN_FILE, 0o600); } catch { /* Windows compat */ }
+
 // Initialize database
 const db = new KiroMemoryDatabase();
 logger.info('WORKER', 'Database initialized');
 
-// Express app
-const app = express();
-app.use(express.json());
-app.use(cors());
+// ── Helpers di validazione ──
 
-// SSE clients
+/** Parsa un intero con range sicuro, ritorna default se invalido */
+function parseIntSafe(value: string | undefined, defaultVal: number, min: number, max: number): number {
+  if (!value) return defaultVal;
+  const parsed = parseInt(value, 10);
+  if (isNaN(parsed) || parsed < min || parsed > max) return defaultVal;
+  return parsed;
+}
+
+/** Valida che un nome progetto contenga solo caratteri sicuri */
+function isValidProject(project: unknown): project is string {
+  return typeof project === 'string' && project.length > 0 && project.length <= 200 && /^[\w\-\.\/@ ]+$/.test(project);
+}
+
+/** Valida una stringa con lunghezza massima */
+function isValidString(val: unknown, maxLen: number): val is string {
+  return typeof val === 'string' && val.length <= maxLen;
+}
+
+// ── Express app ──
+const app = express();
+
+// Sicurezza: header HTTP protettivi
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: ["'self'", "'unsafe-inline'"],
+      styleSrc: ["'self'", "'unsafe-inline'", "https://cdn.tailwindcss.com"],
+      imgSrc: ["'self'", "data:"],
+      connectSrc: ["'self'"],
+      fontSrc: ["'self'", "https://fonts.googleapis.com", "https://fonts.gstatic.com"],
+      frameSrc: ["'none'"]
+    }
+  }
+}));
+
+// Sicurezza: CORS limitato a localhost
+app.use(cors({
+  origin: [
+    `http://localhost:${PORT}`,
+    `http://127.0.0.1:${PORT}`,
+    `http://${HOST}:${PORT}`
+  ],
+  credentials: true,
+  maxAge: 86400
+}));
+
+// Limite dimensione body: 1MB
+app.use(express.json({ limit: '1mb' }));
+
+// Rate limiting globale: 200 req/min per IP
+app.use('/api/', rateLimit({
+  windowMs: 60_000,
+  max: 200,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, retry later' }
+}));
+
+// SSE clients (con limite massimo)
 const clients: express.Response[] = [];
 
 /**
@@ -57,15 +123,29 @@ function broadcast(event: string, data: any): void {
 }
 
 // Endpoint di notifica: gli hook chiamano questo endpoint dopo ogni scrittura in SQLite
-// per triggerare il broadcast SSE ai client della dashboard
-app.post('/api/notify', (req, res) => {
-  const { event, data } = req.body || {};
-  if (event && typeof event === 'string') {
-    broadcast(event, data || {});
-    res.json({ ok: true });
-  } else {
-    res.status(400).json({ error: 'Campo "event" richiesto' });
+// per triggerare il broadcast SSE ai client della dashboard.
+// Protetto da token condiviso per evitare broadcast non autorizzati.
+const ALLOWED_EVENTS = new Set(['observation-created', 'summary-created', 'prompt-created', 'session-created']);
+
+// Rate limit dedicato per /api/notify (più restrittivo)
+const notifyLimiter = rateLimit({ windowMs: 60_000, max: 60, standardHeaders: true, legacyHeaders: false });
+
+app.post('/api/notify', notifyLimiter, (req, res) => {
+  // Verifica token di autenticazione
+  const token = req.headers['x-worker-token'] as string;
+  if (token !== WORKER_TOKEN) {
+    res.status(401).json({ error: 'Invalid or missing X-Worker-Token' });
+    return;
   }
+
+  const { event, data } = req.body || {};
+  if (!event || typeof event !== 'string' || !ALLOWED_EVENTS.has(event)) {
+    res.status(400).json({ error: `Event must be one of: ${[...ALLOWED_EVENTS].join(', ')}` });
+    return;
+  }
+
+  broadcast(event, data || {});
+  res.json({ ok: true });
 });
 
 // Health check endpoint
@@ -77,8 +157,13 @@ app.get('/health', (req, res) => {
   });
 });
 
-// SSE endpoint con keepalive per evitare disconnessioni da proxy/browser
+// SSE endpoint con keepalive e limite connessioni
 app.get('/events', (req, res) => {
+  if (clients.length >= MAX_SSE_CLIENTS) {
+    res.status(503).json({ error: 'Too many SSE connections' });
+    return;
+  }
+
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
@@ -128,10 +213,32 @@ app.get('/api/context/:project', (req, res) => {
   }
 });
 
-// Store observation
+// Store observation (con validazione input)
 app.post('/api/observations', (req, res) => {
   const { memorySessionId, project, type, title, content, concepts, files } = req.body;
-  
+
+  // Validazione campi obbligatori
+  if (!isValidProject(project)) {
+    res.status(400).json({ error: 'Invalid or missing "project"' });
+    return;
+  }
+  if (!isValidString(title, 500)) {
+    res.status(400).json({ error: 'Invalid or missing "title" (max 500 chars)' });
+    return;
+  }
+  if (content && !isValidString(content, 100_000)) {
+    res.status(400).json({ error: '"content" too large (max 100KB)' });
+    return;
+  }
+  if (concepts && !Array.isArray(concepts)) {
+    res.status(400).json({ error: '"concepts" must be an array' });
+    return;
+  }
+  if (files && !Array.isArray(files)) {
+    res.status(400).json({ error: '"files" must be an array' });
+    return;
+  }
+
   try {
     const id = createObservation(
       db.db,
@@ -158,10 +265,20 @@ app.post('/api/observations', (req, res) => {
   }
 });
 
-// Store summary
+// Store summary (con validazione input)
 app.post('/api/summaries', (req, res) => {
   const { sessionId, project, request, learned, completed, nextSteps } = req.body;
-  
+
+  if (!isValidProject(project)) {
+    res.status(400).json({ error: 'Invalid or missing "project"' });
+    return;
+  }
+  const MAX_FIELD = 50_000;
+  if (request && !isValidString(request, MAX_FIELD)) { res.status(400).json({ error: '"request" too large' }); return; }
+  if (learned && !isValidString(learned, MAX_FIELD)) { res.status(400).json({ error: '"learned" too large' }); return; }
+  if (completed && !isValidString(completed, MAX_FIELD)) { res.status(400).json({ error: '"completed" too large' }); return; }
+  if (nextSteps && !isValidString(nextSteps, MAX_FIELD)) { res.status(400).json({ error: '"nextSteps" too large' }); return; }
+
   try {
     const id = createSummary(
       db.db,
@@ -197,7 +314,7 @@ app.get('/api/search', (req, res) => {
     const filters = {
       project: project || undefined,
       type: type || undefined,
-      limit: limit ? parseInt(limit, 10) : 20
+      limit: parseIntSafe(limit, 20, 1, 100)
     };
 
     const results = {
@@ -221,12 +338,18 @@ app.get('/api/timeline', (req, res) => {
     return;
   }
 
+  const anchorId = parseIntSafe(anchor, 0, 1, Number.MAX_SAFE_INTEGER);
+  if (anchorId === 0) {
+    res.status(400).json({ error: 'Invalid "anchor" (must be positive integer)' });
+    return;
+  }
+
   try {
     const timeline = getTimeline(
       db.db,
-      parseInt(anchor, 10),
-      depth_before ? parseInt(depth_before, 10) : 5,
-      depth_after ? parseInt(depth_after, 10) : 5
+      anchorId,
+      parseIntSafe(depth_before, 5, 1, 50),
+      parseIntSafe(depth_after, 5, 1, 50)
     );
 
     res.json({ timeline });
@@ -236,12 +359,17 @@ app.get('/api/timeline', (req, res) => {
   }
 });
 
-// Batch fetch osservazioni per ID
+// Batch fetch osservazioni per ID (max 100 elementi)
 app.post('/api/observations/batch', (req, res) => {
   const { ids } = req.body;
 
-  if (!ids || !Array.isArray(ids)) {
-    res.status(400).json({ error: 'Body parameter "ids" (array) is required' });
+  if (!ids || !Array.isArray(ids) || ids.length === 0 || ids.length > 100) {
+    res.status(400).json({ error: '"ids" must be an array of 1-100 elements' });
+    return;
+  }
+  // Valida che ogni elemento sia un intero positivo
+  if (!ids.every((id: unknown) => typeof id === 'number' && Number.isInteger(id) && id > 0)) {
+    res.status(400).json({ error: 'All IDs must be positive integers' });
     return;
   }
 
@@ -270,8 +398,8 @@ app.get('/api/stats/:project', (req, res) => {
 // Lista osservazioni paginata
 app.get('/api/observations', (req, res) => {
   const { offset, limit, project } = req.query as { offset?: string; limit?: string; project?: string };
-  const _offset = offset ? parseInt(offset, 10) : 0;
-  const _limit = limit ? parseInt(limit, 10) : 50;
+  const _offset = parseIntSafe(offset, 0, 0, 1_000_000);
+  const _limit = parseIntSafe(limit, 50, 1, 200);
 
   try {
     const countSql = project
@@ -296,8 +424,8 @@ app.get('/api/observations', (req, res) => {
 // Lista summary paginata
 app.get('/api/summaries', (req, res) => {
   const { offset, limit, project } = req.query as { offset?: string; limit?: string; project?: string };
-  const _offset = offset ? parseInt(offset, 10) : 0;
-  const _limit = limit ? parseInt(limit, 10) : 20;
+  const _offset = parseIntSafe(offset, 0, 0, 1_000_000);
+  const _limit = parseIntSafe(limit, 20, 1, 200);
 
   try {
     const countSql = project
@@ -322,8 +450,8 @@ app.get('/api/summaries', (req, res) => {
 // Lista prompt paginata
 app.get('/api/prompts', (req, res) => {
   const { offset, limit, project } = req.query as { offset?: string; limit?: string; project?: string };
-  const _offset = offset ? parseInt(offset, 10) : 0;
-  const _limit = limit ? parseInt(limit, 10) : 20;
+  const _offset = parseIntSafe(offset, 0, 0, 1_000_000);
+  const _limit = parseIntSafe(limit, 20, 1, 200);
 
   try {
     const countSql = project
