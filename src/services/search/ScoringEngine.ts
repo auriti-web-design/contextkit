@@ -109,6 +109,41 @@ export function computeCompositeScore(
 }
 
 /**
+ * Score di recency basato sull'ultimo accesso (ricerca che ha trovato l'osservazione).
+ * Usa half-life piu breve rispetto a recencyScore() perche l'accesso e piu volatile.
+ *
+ * Se l'osservazione non e mai stata acceduta, ritorna 0 (penalita massima).
+ *
+ * @param lastAccessedEpoch - Timestamp dell'ultimo accesso in millisecondi (null se mai acceduta)
+ * @param halfLifeHours - Tempo di dimezzamento in ore (default: 48 = 2 giorni)
+ * @returns Score 0-1 (1 = acceduta di recente)
+ */
+export function accessRecencyScore(lastAccessedEpoch: number | null, halfLifeHours: number = 48): number {
+  if (!lastAccessedEpoch || lastAccessedEpoch <= 0) return 0;
+
+  const nowMs = Date.now();
+  const ageMs = nowMs - lastAccessedEpoch;
+
+  // Se timestamp nel futuro, score massimo
+  if (ageMs <= 0) return 1;
+
+  const ageHours = ageMs / (1000 * 60 * 60);
+  return Math.exp(-ageHours * Math.LN2 / halfLifeHours);
+}
+
+/**
+ * Penalita per osservazioni stale (file modificati dopo l'osservazione).
+ * Ritorna un moltiplicatore: 1.0 se fresh, 0.5 se stale.
+ * Non elimina l'osservazione dal ranking ma la penalizza significativamente.
+ *
+ * @param isStale - Flag stale (0 = fresh, 1 = stale)
+ * @returns Moltiplicatore 0.5-1.0
+ */
+export function stalenessPenalty(isStale: number): number {
+  return isStale === 1 ? 0.5 : 1.0;
+}
+
+/**
  * Stima approssimativa dei token da una stringa.
  * Usa la regola empirica: 1 token ≈ 4 caratteri.
  */

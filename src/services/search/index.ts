@@ -8,6 +8,8 @@ export {
   projectMatchScore,
   computeCompositeScore,
   estimateTokens,
+  accessRecencyScore,
+  stalenessPenalty,
   SEARCH_WEIGHTS,
   CONTEXT_WEIGHTS
 } from './ScoringEngine.js';

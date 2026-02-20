@@ -1271,6 +1271,10 @@ async function main() {
         await addSummary(sdk, args.slice(1).join(' '));
         break;
 
+      case 'decay':
+        await handleDecay(sdk, args[1]);
+        break;
+
       case 'embeddings':
       case 'emb':
         await handleEmbeddings(sdk, args[1]);
@@ -1507,6 +1511,58 @@ async function semanticSearchCli(sdk: ReturnType<typeof createKiroMemory>, query
   });
 }
 
+async function handleDecay(sdk: ReturnType<typeof createKiroMemory>, subcommand: string) {
+  switch (subcommand) {
+    case 'stats': {
+      const stats = await sdk.getDecayStats();
+      console.log('\nDecay Statistics:\n');
+      console.log(`  Total observations:    ${stats.total}`);
+      console.log(`  Stale (file changed):  ${stats.stale}`);
+      console.log(`  Never accessed:        ${stats.neverAccessed}`);
+      console.log(`  Recently accessed:     ${stats.recentlyAccessed} (last 48h)`);
+
+      if (stats.total > 0) {
+        const freshPercent = Math.round(((stats.total - stats.stale) / stats.total) * 100);
+        console.log(`  Freshness:             ${freshPercent}%`);
+      }
+      console.log('');
+      break;
+    }
+    case 'detect-stale': {
+      console.log('\nDetecting stale observations...\n');
+      const count = await sdk.detectStaleObservations();
+      if (count > 0) {
+        console.log(`  Found and marked ${count} stale observation(s).`);
+        console.log(`  These observations reference files that have been modified since they were recorded.\n`);
+      } else {
+        console.log('  No stale observations found. All observations are fresh.\n');
+      }
+      break;
+    }
+    case 'consolidate': {
+      const dryRun = args.includes('--dry-run');
+      console.log(`\n${dryRun ? '[DRY RUN] ' : ''}Consolidating duplicate observations...\n`);
+      const result = await sdk.consolidateObservations({ dryRun });
+      if (result.merged > 0) {
+        console.log(`  Merged ${result.merged} group(s), removed ${result.removed} duplicate(s).`);
+        if (dryRun) {
+          console.log(`  (Dry run: no changes were made. Remove --dry-run to apply.)`);
+        }
+      } else {
+        console.log('  No duplicate observations found to consolidate.');
+      }
+      console.log('');
+      break;
+    }
+    default:
+      console.log('\nUsage: kiro-memory decay <subcommand>\n');
+      console.log('Subcommands:');
+      console.log('  stats                Show decay statistics (stale, never accessed, etc.)');
+      console.log('  detect-stale         Detect and mark stale observations (files changed)');
+      console.log('  consolidate [--dry-run]  Consolidate duplicate observations\n');
+  }
+}
+
 function showHelp() {
   console.log(`Usage: kiro-memory <command> [options]
 
@@ -1528,6 +1584,9 @@ Commands:
   add-summary <content>     Add a new summary
   embeddings stats          Show embedding statistics
   embeddings backfill [n]   Generate embeddings for unprocessed observations
+  decay stats               Show decay statistics (stale, never accessed, etc.)
+  decay detect-stale        Detect and mark stale observations
+  decay consolidate [--dry-run]  Consolidate duplicate observations
   help                      Show this help message
 
 Examples:
@@ -1538,6 +1597,9 @@ Examples:
   kiro-memory semantic-search "how did I fix the auth bug"
   kiro-memory embeddings stats
   kiro-memory embeddings backfill 100
+  kiro-memory decay stats
+  kiro-memory decay detect-stale
+  kiro-memory decay consolidate --dry-run
   kiro-memory observations 20
 `);
 }

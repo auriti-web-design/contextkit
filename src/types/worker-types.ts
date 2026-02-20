@@ -121,6 +121,8 @@ export interface Observation {
   prompt_number: number;
   created_at: string;
   created_at_epoch: number;
+  last_accessed_epoch: number | null;
+  is_stale: number; // 0 = fresh, 1 = file modificato dopo l'osservazione
 }
 
 export interface Summary {

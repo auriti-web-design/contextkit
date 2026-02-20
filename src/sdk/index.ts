@@ -5,11 +5,11 @@
  */
 
 import { KiroMemoryDatabase } from '../services/sqlite/index.js';
-import { getObservationsByProject, createObservation, searchObservations } from '../services/sqlite/Observations.js';
+import { getObservationsByProject, createObservation, searchObservations, updateLastAccessed, consolidateObservations as dbConsolidateObservations } from '../services/sqlite/Observations.js';
 import { getSummariesByProject, createSummary, searchSummaries } from '../services/sqlite/Summaries.js';
 import { getPromptsByProject, createPrompt } from '../services/sqlite/Prompts.js';
 import { getSessionByContentId, createSession, completeSession as dbCompleteSession } from '../services/sqlite/Sessions.js';
-import { searchObservationsFTS, searchSummariesFiltered, getObservationsByIds as dbGetObservationsByIds, getTimeline as dbGetTimeline } from '../services/sqlite/Search.js';
+import { searchObservationsFTS, searchSummariesFiltered, getObservationsByIds as dbGetObservationsByIds, getTimeline as dbGetTimeline, getStaleObservations as dbGetStaleObservations, markObservationsStale as dbMarkObservationsStale } from '../services/sqlite/Search.js';
 import { getHybridSearch, type SearchResult } from '../services/search/HybridSearch.js';
 import { getEmbeddingService } from '../services/search/EmbeddingService.js';
 import { getVectorSearch } from '../services/search/VectorSearch.js';
@@ -440,6 +440,57 @@ export class KiroMemorySDK {
       tokenBudget,
       tokensUsed: Math.min(tokensUsed, tokenBudget)
     };
+  }
+
+  /**
+   * Rileva osservazioni stale (file modificati dopo la creazione) e le marca nel DB.
+   * Ritorna il numero di osservazioni marcate come stale.
+   */
+  async detectStaleObservations(): Promise<number> {
+    const staleObs = dbGetStaleObservations(this.db.db, this.project);
+    if (staleObs.length > 0) {
+      const ids = staleObs.map(o => o.id);
+      dbMarkObservationsStale(this.db.db, ids, true);
+    }
+    return staleObs.length;
+  }
+
+  /**
+   * Consolida osservazioni duplicate sullo stesso file e tipo.
+   * Raggruppa per (project, type, files_modified), mantiene la piu recente.
+   */
+  async consolidateObservations(options: { dryRun?: boolean } = {}): Promise<{ merged: number; removed: number }> {
+    return dbConsolidateObservations(this.db.db, this.project, options);
+  }
+
+  /**
+   * Statistiche decay: totale, stale, mai accedute, accedute di recente.
+   */
+  async getDecayStats(): Promise<{
+    total: number;
+    stale: number;
+    neverAccessed: number;
+    recentlyAccessed: number;
+  }> {
+    const total = (this.db.db.query(
+      'SELECT COUNT(*) as count FROM observations WHERE project = ?'
+    ).get(this.project) as any)?.count || 0;
+
+    const stale = (this.db.db.query(
+      'SELECT COUNT(*) as count FROM observations WHERE project = ? AND is_stale = 1'
+    ).get(this.project) as any)?.count || 0;
+
+    const neverAccessed = (this.db.db.query(
+      'SELECT COUNT(*) as count FROM observations WHERE project = ? AND last_accessed_epoch IS NULL'
+    ).get(this.project) as any)?.count || 0;
+
+    // "Recentemente accedute" = ultimo accesso nelle ultime 48 ore
+    const recentThreshold = Date.now() - (48 * 60 * 60 * 1000);
+    const recentlyAccessed = (this.db.db.query(
+      'SELECT COUNT(*) as count FROM observations WHERE project = ? AND last_accessed_epoch > ?'
+    ).get(this.project, recentThreshold) as any)?.count || 0;
+
+    return { total, stale, neverAccessed, recentlyAccessed };
   }
 
   /**

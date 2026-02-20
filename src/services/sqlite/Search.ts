@@ -1,4 +1,5 @@
 import { Database } from 'bun:sqlite';
+import { existsSync, statSync } from 'fs';
 import type { Observation, Summary, SearchFilters, TimelineEntry } from '../../types/worker-types.js';
 
 /**
@@ -293,4 +294,66 @@ export function getProjectStats(db: Database, project: string): {
     sessions: (sesStmt.get(project) as any)?.count || 0,
     prompts: (prmStmt.get(project) as any)?.count || 0,
   };
+}
+
+/**
+ * Trova osservazioni con file modificati dopo la creazione dell'osservazione.
+ * Verifica il mtime del filesystem per ogni file in files_modified.
+ */
+export function getStaleObservations(db: Database, project: string): Observation[] {
+  // Query osservazioni con files_modified non vuoto
+  const rows = db.query(`
+    SELECT * FROM observations
+    WHERE project = ? AND files_modified IS NOT NULL AND files_modified != ''
+    ORDER BY created_at_epoch DESC
+    LIMIT 500
+  `).all(project) as Observation[];
+
+  const staleObs: Observation[] = [];
+
+  for (const obs of rows) {
+    if (!obs.files_modified) continue;
+
+    // Parsa files_modified (comma-separated)
+    const files = obs.files_modified.split(',').map(f => f.trim()).filter(Boolean);
+
+    let isStale = false;
+    for (const filepath of files) {
+      try {
+        if (!existsSync(filepath)) continue; // File rimosso, non possiamo verificare
+        const stat = statSync(filepath);
+        if (stat.mtimeMs > obs.created_at_epoch) {
+          isStale = true;
+          break;
+        }
+      } catch {
+        // File non accessibile, skip
+      }
+    }
+
+    if (isStale) {
+      staleObs.push(obs);
+    }
+  }
+
+  return staleObs;
+}
+
+/**
+ * Marca osservazioni come stale (1) o fresh (0) nel database.
+ */
+export function markObservationsStale(db: Database, ids: number[], stale: boolean): void {
+  if (!Array.isArray(ids) || ids.length === 0) return;
+
+  const validIds = ids
+    .filter(id => typeof id === 'number' && Number.isInteger(id) && id > 0)
+    .slice(0, 500);
+
+  if (validIds.length === 0) return;
+
+  const placeholders = validIds.map(() => '?').join(',');
+  db.run(
+    `UPDATE observations SET is_stale = ? WHERE id IN (${placeholders})`,
+    [stale ? 1 : 0, ...validIds]
+  );
 }

@@ -431,6 +431,19 @@ class MigrationRunner {
 
           db.run('CREATE INDEX IF NOT EXISTS idx_embeddings_model ON observation_embeddings(model)');
         }
+      },
+      {
+        version: 5,
+        up: (db) => {
+          // Traccia ultimo accesso (ricerca che ha trovato l'osservazione)
+          db.run('ALTER TABLE observations ADD COLUMN last_accessed_epoch INTEGER');
+          // Flag stale: 0 = fresh, 1 = file modificato dopo l'osservazione
+          db.run('ALTER TABLE observations ADD COLUMN is_stale INTEGER DEFAULT 0');
+          // Indice per query decay
+          db.run('CREATE INDEX IF NOT EXISTS idx_observations_last_accessed ON observations(last_accessed_epoch)');
+          // Indice per query stale
+          db.run('CREATE INDEX IF NOT EXISTS idx_observations_stale ON observations(is_stale)');
+        }
       }
     ];
   }

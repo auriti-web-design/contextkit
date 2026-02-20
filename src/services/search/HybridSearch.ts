@@ -203,7 +203,22 @@ export class HybridSearch {
 
     // Ordina per score decrescente e limita
     scored.sort((a, b) => b.score - a.score);
-    return scored.slice(0, limit);
+    const finalResults = scored.slice(0, limit);
+
+    // Access tracking: aggiorna last_accessed_epoch per i risultati trovati (fire-and-forget)
+    if (finalResults.length > 0) {
+      try {
+        const { updateLastAccessed } = await import('../sqlite/Observations.js');
+        const ids = finalResults.map(r => parseInt(r.id, 10)).filter(id => id > 0);
+        if (ids.length > 0) {
+          updateLastAccessed(db, ids);
+        }
+      } catch {
+        // Non propagare errori — access tracking e opzionale
+      }
+    }
+
+    return finalResults;
   }
 }
 
