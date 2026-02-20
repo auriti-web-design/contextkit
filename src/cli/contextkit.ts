@@ -664,31 +664,36 @@ async function installClaudeCode() {
     }
   }
 
-  if (!settings.hooks) settings.hooks = {};
-
-  // Mappa hook events → script
+  // Mappa hook events → script (timeout in secondi per Claude Code)
   const hookMap: Record<string, { script: string; timeout: number }> = {
-    'SessionStart': { script: 'hooks/agentSpawn.js', timeout: 10000 },
-    'UserPromptSubmit': { script: 'hooks/userPromptSubmit.js', timeout: 5000 },
-    'PostToolUse': { script: 'hooks/postToolUse.js', timeout: 5000 },
-    'Stop': { script: 'hooks/stop.js', timeout: 10000 }
+    'SessionStart': { script: 'hooks/agentSpawn.js', timeout: 10 },
+    'UserPromptSubmit': { script: 'hooks/userPromptSubmit.js', timeout: 5 },
+    'PostToolUse': { script: 'hooks/postToolUse.js', timeout: 5 },
+    'Stop': { script: 'hooks/stop.js', timeout: 10 }
   };
 
+  // Claude Code: eventi sono chiavi TOP-LEVEL in settings.json (no wrapper "hooks")
+  // Formato: { matcher: "...", hooks: [{ type, command, timeout }] }
   for (const [event, config] of Object.entries(hookMap)) {
     const hookEntry = {
-      type: 'command',
-      command: `node ${join(distDir, config.script)}`,
-      timeout: config.timeout
+      matcher: '',
+      hooks: [{
+        type: 'command' as const,
+        command: `node ${join(distDir, config.script)}`,
+        timeout: config.timeout
+      }]
     };
 
-    if (!settings.hooks[event]) {
-      settings.hooks[event] = [hookEntry];
-    } else if (Array.isArray(settings.hooks[event])) {
+    if (!settings[event]) {
+      settings[event] = [hookEntry];
+    } else if (Array.isArray(settings[event])) {
       // Rimuovi eventuali hook kiro-memory precedenti e aggiungi il nuovo
-      settings.hooks[event] = settings.hooks[event].filter(
-        (h: any) => !h.command?.includes('kiro-memory') && !h.command?.includes('contextkit')
+      settings[event] = settings[event].filter(
+        (h: any) => !h.hooks?.some((hk: any) =>
+          hk.command?.includes('kiro-memory') || hk.command?.includes('contextkit')
+        )
       );
-      settings.hooks[event].push(hookEntry);
+      settings[event].push(hookEntry);
     }
   }
 
@@ -908,11 +913,12 @@ async function runDoctor() {
   if (existsSync(claudeSettingsPath)) {
     try {
       const claudeSettings = JSON.parse(readFileSync(claudeSettingsPath, 'utf8'));
-      claudeHooksOk = !!(claudeSettings.hooks?.SessionStart || claudeSettings.hooks?.PostToolUse);
+      // Claude Code: eventi sono chiavi top-level in settings.json (no wrapper "hooks")
+      claudeHooksOk = !!(claudeSettings?.SessionStart || claudeSettings?.PostToolUse);
       // Verifica che i hook puntino a kiro-memory
       if (claudeHooksOk) {
-        const allHooks = JSON.stringify(claudeSettings.hooks);
-        claudeHooksOk = allHooks.includes('kiro-memory') || allHooks.includes('agentSpawn');
+        const allSettings = JSON.stringify(claudeSettings);
+        claudeHooksOk = allSettings.includes('kiro-memory') || allSettings.includes('agentSpawn');
       }
     } catch {}
   }
