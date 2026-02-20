@@ -1271,6 +1271,16 @@ async function main() {
         await addSummary(sdk, args.slice(1).join(' '));
         break;
 
+      case 'embeddings':
+      case 'emb':
+        await handleEmbeddings(sdk, args[1]);
+        break;
+
+      case 'semantic-search':
+      case 'sem':
+        await semanticSearchCli(sdk, args[1]);
+        break;
+
       case 'help':
       case '--help':
       case '-h':
@@ -1416,6 +1426,87 @@ async function addSummary(sdk: ReturnType<typeof createKiroMemory>, content: str
   console.log(`✅ Summary stored with ID: ${id}\n`);
 }
 
+async function handleEmbeddings(sdk: ReturnType<typeof createKiroMemory>, subcommand: string) {
+  switch (subcommand) {
+    case 'stats': {
+      const stats = sdk.getEmbeddingStats();
+      console.log('\nEmbedding Statistics:\n');
+      console.log(`  Total observations:  ${stats.total}`);
+      console.log(`  With embeddings:     ${stats.embedded}`);
+      console.log(`  Coverage:            ${stats.percentage}%`);
+
+      // Inizializza per mostrare info provider
+      await sdk.initializeEmbeddings();
+      const { getEmbeddingService } = await import('../services/search/EmbeddingService.js');
+      const embService = getEmbeddingService();
+      console.log(`  Provider:            ${embService.getProvider() || 'none'}`);
+      console.log(`  Dimensions:          ${embService.getDimensions()}`);
+      console.log(`  Available:           ${embService.isAvailable() ? 'yes' : 'no'}`);
+
+      if (stats.percentage < 100 && stats.total > 0) {
+        console.log(`\n  Run 'kiro-memory embeddings backfill' to generate missing embeddings.`);
+      }
+      console.log('');
+      break;
+    }
+    case 'backfill': {
+      const batchSize = parseInt(args[2]) || 50;
+      console.log(`\nGenerating embeddings (batch size: ${batchSize})...\n`);
+
+      // Inizializza embedding service
+      const available = await sdk.initializeEmbeddings();
+      if (!available) {
+        console.log('  No embedding provider available.');
+        console.log('  Install fastembed or @huggingface/transformers:');
+        console.log('    npm install fastembed');
+        console.log('    npm install @huggingface/transformers\n');
+        process.exit(1);
+      }
+
+      const count = await sdk.backfillEmbeddings(batchSize);
+      console.log(`  Generated ${count} embeddings.\n`);
+
+      const stats = sdk.getEmbeddingStats();
+      console.log(`  Coverage: ${stats.embedded}/${stats.total} (${stats.percentage}%)\n`);
+      break;
+    }
+    default:
+      console.log('\nUsage: kiro-memory embeddings <subcommand>\n');
+      console.log('Subcommands:');
+      console.log('  stats              Show embedding statistics');
+      console.log('  backfill [size]    Generate embeddings for observations without them (default: 50)\n');
+  }
+}
+
+async function semanticSearchCli(sdk: ReturnType<typeof createKiroMemory>, query: string) {
+  if (!query) {
+    console.error('Error: Please provide a search query');
+    process.exit(1);
+  }
+
+  console.log(`\nSemantic search: "${query}"...\n`);
+
+  // Inizializza embedding service
+  await sdk.initializeEmbeddings();
+
+  const results = await sdk.hybridSearch(query, { limit: 10 });
+
+  if (results.length === 0) {
+    console.log('No results found.\n');
+    return;
+  }
+
+  console.log(`Found ${results.length} results:\n`);
+  results.forEach((r, i) => {
+    const scorePercent = Math.round(r.score * 100);
+    console.log(`  ${i + 1}. [${r.source}] ${r.title} (score: ${scorePercent}%)`);
+    if (r.content) {
+      console.log(`     ${r.content.substring(0, 150)}${r.content.length > 150 ? '...' : ''}`);
+    }
+    console.log('');
+  });
+}
+
 function showHelp() {
   console.log(`Usage: kiro-memory <command> [options]
 
@@ -1429,11 +1520,14 @@ Setup:
 
 Commands:
   context, ctx              Show current project context
-  search <query>            Search across all context
+  search <query>            Search across all context (keyword FTS5)
+  semantic-search <query>   Hybrid search: vector + keyword (semantic)
   observations [limit]      Show recent observations (default: 10)
   summaries [limit]         Show recent summaries (default: 5)
   add-observation <title> <content>   Add a new observation
   add-summary <content>     Add a new summary
+  embeddings stats          Show embedding statistics
+  embeddings backfill [n]   Generate embeddings for unprocessed observations
   help                      Show this help message
 
 Examples:
@@ -1441,6 +1535,9 @@ Examples:
   kiro-memory doctor
   kiro-memory context
   kiro-memory search "authentication"
+  kiro-memory semantic-search "how did I fix the auth bug"
+  kiro-memory embeddings stats
+  kiro-memory embeddings backfill 100
   kiro-memory observations 20
 `);
 }

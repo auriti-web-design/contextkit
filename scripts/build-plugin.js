@@ -36,7 +36,8 @@ const nodeCommon = {
   format: 'esm',
   banner: esmRequireBanner,
   plugins: [bunSqliteShimPlugin],
-  external: ['better-sqlite3']  // CJS nativo, caricato a runtime
+  // CJS nativi e optional deps, caricati a runtime
+  external: ['better-sqlite3', 'fastembed', '@huggingface/transformers', 'onnxruntime-node', '@anush008/tokenizers']
 };
 
 function ensureDir(dir) {
@@ -73,7 +74,7 @@ async function build() {
     ...nodeCommon,
     entryPoints: [join(SRC_DIR, 'services', 'worker-service.ts')],
     outfile: join(DIST_DIR, 'worker-service.js'),
-    external: ['better-sqlite3', 'express', 'cors']
+    external: ['better-sqlite3', 'express', 'cors', 'fastembed', '@huggingface/transformers', 'onnxruntime-node', '@anush008/tokenizers']
   });
 
   // Build hook Kiro-compatibili (4 script eseguibili)
@@ -127,10 +128,12 @@ async function build() {
     entryPoints: [
       join(SRC_DIR, 'services', 'search', 'index.ts'),
       join(SRC_DIR, 'services', 'search', 'ChromaManager.ts'),
-      join(SRC_DIR, 'services', 'search', 'HybridSearch.ts')
+      join(SRC_DIR, 'services', 'search', 'HybridSearch.ts'),
+      join(SRC_DIR, 'services', 'search', 'EmbeddingService.ts'),
+      join(SRC_DIR, 'services', 'search', 'VectorSearch.ts')
     ],
     outdir: join(DIST_DIR, 'services', 'search'),
-    external: ['better-sqlite3', 'chromadb']
+    external: ['better-sqlite3', 'chromadb', 'fastembed', '@huggingface/transformers', 'onnxruntime-node', '@anush008/tokenizers']
   });
 
   // Build shared
@@ -163,7 +166,7 @@ async function build() {
     ...nodeCommon,
     entryPoints: [join(SRC_DIR, 'index.ts')],
     outfile: join(DIST_DIR, 'index.js'),
-    external: ['better-sqlite3', 'express', 'cors', 'chromadb']
+    external: ['better-sqlite3', 'express', 'cors', 'chromadb', 'fastembed', '@huggingface/transformers', 'onnxruntime-node', '@anush008/tokenizers']
   });
 
   // Copy viewer HTML

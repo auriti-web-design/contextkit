@@ -18,6 +18,9 @@ import { KiroMemoryDatabase } from './sqlite/Database.js';
 import { getObservationsByProject, createObservation } from './sqlite/Observations.js';
 import { getSummariesByProject, createSummary } from './sqlite/Summaries.js';
 import { searchObservationsFTS, searchSummariesFiltered, getTimeline, getObservationsByIds, getProjectStats } from './sqlite/Search.js';
+import { getHybridSearch } from './search/HybridSearch.js';
+import { getEmbeddingService } from './search/EmbeddingService.js';
+import { getVectorSearch } from './search/VectorSearch.js';
 import { logger } from '../utils/logger.js';
 import { DATA_DIR } from '../shared/paths.js';
 
@@ -50,6 +53,11 @@ try {
 // Initialize database
 const db = new KiroMemoryDatabase();
 logger.info('WORKER', 'Database initialized');
+
+// Inizializza embedding service in background (lazy, non bloccante)
+getHybridSearch().initialize().catch(err => {
+  logger.warn('WORKER', 'Inizializzazione embedding fallita, ricerca solo FTS5', {}, err as Error);
+});
 
 // ── Helpers di validazione ──
 
@@ -273,7 +281,10 @@ app.post('/api/observations', (req, res) => {
     );
     
     broadcast('observation-created', { id, project, title });
-    
+
+    // Genera embedding in background (fire-and-forget)
+    generateEmbeddingForObservation(id, title, content, concepts).catch(() => {});
+
     res.json({ id, success: true });
   } catch (error) {
     logger.error('WORKER', 'Failed to store observation', {}, error as Error);
@@ -412,6 +423,99 @@ app.get('/api/stats/:project', (req, res) => {
     res.json(stats);
   } catch (error) {
     logger.error('WORKER', 'Stats fallite', { project }, error as Error);
+    res.status(500).json({ error: 'Stats failed' });
+  }
+});
+
+// ── Embedding e ricerca semantica ──
+
+/** Genera embedding per un'osservazione (fire-and-forget) */
+async function generateEmbeddingForObservation(
+  observationId: number,
+  title: string,
+  content: string | null,
+  concepts?: string[]
+): Promise<void> {
+  try {
+    const embeddingService = getEmbeddingService();
+    if (!embeddingService.isAvailable()) return;
+
+    const parts = [title];
+    if (content) parts.push(content);
+    if (concepts?.length) parts.push(concepts.join(', '));
+    const fullText = parts.join(' ').substring(0, 2000);
+
+    const embedding = await embeddingService.embed(fullText);
+    if (embedding) {
+      const vectorSearch = getVectorSearch();
+      await vectorSearch.storeEmbedding(
+        db.db,
+        observationId,
+        embedding,
+        embeddingService.getProvider() || 'unknown'
+      );
+    }
+  } catch (error) {
+    logger.debug('WORKER', `Embedding generation fallita per obs ${observationId}: ${error}`);
+  }
+}
+
+// Ricerca ibrida (vector + keyword)
+app.get('/api/hybrid-search', async (req, res) => {
+  const { q, project, limit } = req.query as { q: string; project?: string; limit?: string };
+
+  if (!q) {
+    res.status(400).json({ error: 'Query parameter "q" is required' });
+    return;
+  }
+
+  try {
+    const hybridSearch = getHybridSearch();
+    const results = await hybridSearch.search(db.db, q, {
+      project: project || undefined,
+      limit: parseIntSafe(limit, 10, 1, 100)
+    });
+
+    res.json({ results, count: results.length });
+  } catch (error) {
+    logger.error('WORKER', 'Ricerca ibrida fallita', { query: q }, error as Error);
+    res.status(500).json({ error: 'Hybrid search failed' });
+  }
+});
+
+// Backfill embeddings per osservazioni senza embedding
+app.post('/api/embeddings/backfill', async (req, res) => {
+  const { batchSize } = req.body || {};
+
+  try {
+    const vectorSearch = getVectorSearch();
+    const count = await vectorSearch.backfillEmbeddings(
+      db.db,
+      parseIntSafe(String(batchSize), 50, 1, 500)
+    );
+
+    res.json({ success: true, generated: count });
+  } catch (error) {
+    logger.error('WORKER', 'Backfill embeddings fallito', {}, error as Error);
+    res.status(500).json({ error: 'Backfill failed' });
+  }
+});
+
+// Statistiche embeddings
+app.get('/api/embeddings/stats', (_req, res) => {
+  try {
+    const vectorSearch = getVectorSearch();
+    const stats = vectorSearch.getStats(db.db);
+    const embeddingService = getEmbeddingService();
+
+    res.json({
+      ...stats,
+      provider: embeddingService.getProvider(),
+      dimensions: embeddingService.getDimensions(),
+      available: embeddingService.isAvailable()
+    });
+  } catch (error) {
+    logger.error('WORKER', 'Embedding stats fallite', {}, error as Error);
     res.status(500).json({ error: 'Stats failed' });
   }
 });

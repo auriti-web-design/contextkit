@@ -413,6 +413,24 @@ class MigrationRunner {
 
           db.run('CREATE UNIQUE INDEX IF NOT EXISTS idx_project_aliases_name ON project_aliases(project_name)');
         }
+      },
+      {
+        version: 4,
+        up: (db) => {
+          // Tabella embeddings per ricerca semantica locale
+          db.run(`
+            CREATE TABLE IF NOT EXISTS observation_embeddings (
+              observation_id INTEGER PRIMARY KEY,
+              embedding BLOB NOT NULL,
+              model TEXT NOT NULL,
+              dimensions INTEGER NOT NULL,
+              created_at TEXT NOT NULL,
+              FOREIGN KEY (observation_id) REFERENCES observations(id) ON DELETE CASCADE
+            )
+          `);
+
+          db.run('CREATE INDEX IF NOT EXISTS idx_embeddings_model ON observation_embeddings(model)');
+        }
       }
     ];
   }

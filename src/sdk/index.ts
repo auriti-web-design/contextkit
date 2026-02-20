@@ -10,6 +10,10 @@ import { getSummariesByProject, createSummary, searchSummaries } from '../servic
 import { getPromptsByProject, createPrompt } from '../services/sqlite/Prompts.js';
 import { getSessionByContentId, createSession, completeSession as dbCompleteSession } from '../services/sqlite/Sessions.js';
 import { searchObservationsFTS, searchSummariesFiltered, getObservationsByIds as dbGetObservationsByIds, getTimeline as dbGetTimeline } from '../services/sqlite/Search.js';
+import { getHybridSearch, type SearchResult } from '../services/search/HybridSearch.js';
+import { getEmbeddingService } from '../services/search/EmbeddingService.js';
+import { getVectorSearch } from '../services/search/VectorSearch.js';
+import { logger } from '../utils/logger.js';
 import type {
   Observation,
   Summary,
@@ -91,6 +95,35 @@ export class KiroMemorySDK {
   }
 
   /**
+   * Genera e salva embedding per un'osservazione (fire-and-forget, non blocca)
+   */
+  private async generateEmbeddingAsync(observationId: number, title: string, content: string, concepts?: string[]): Promise<void> {
+    try {
+      const embeddingService = getEmbeddingService();
+      if (!embeddingService.isAvailable()) return;
+
+      // Componi testo per embedding: title + content + concepts
+      const parts = [title, content];
+      if (concepts?.length) parts.push(concepts.join(', '));
+      const fullText = parts.join(' ').substring(0, 2000);
+
+      const embedding = await embeddingService.embed(fullText);
+      if (embedding) {
+        const vectorSearch = getVectorSearch();
+        await vectorSearch.storeEmbedding(
+          this.db.db,
+          observationId,
+          embedding,
+          embeddingService.getProvider() || 'unknown'
+        );
+      }
+    } catch (error) {
+      // Non propagare errori — embedding è opzionale
+      logger.debug('SDK', `Embedding generation fallita per obs ${observationId}: ${error}`);
+    }
+  }
+
+  /**
    * Store a new observation
    */
   async storeObservation(data: {
@@ -101,7 +134,7 @@ export class KiroMemorySDK {
     files?: string[];
   }): Promise<number> {
     this.validateObservationInput(data);
-    return createObservation(
+    const observationId = createObservation(
       this.db.db,
       'sdk-' + Date.now(),
       this.project,
@@ -116,6 +149,12 @@ export class KiroMemorySDK {
       data.files?.join(', ') || null,  // files_modified
       0               // prompt_number
     );
+
+    // Genera embedding in background (fire-and-forget, non blocca)
+    this.generateEmbeddingAsync(observationId, data.title, data.content, data.concepts)
+      .catch(() => {}); // Ignora errori silenziosamente
+
+    return observationId;
   }
 
   /**
@@ -236,6 +275,76 @@ export class KiroMemorySDK {
   }
 
   /**
+   * Ricerca ibrida: vector search + keyword FTS5
+   * Richiede inizializzazione HybridSearch (embedding service)
+   */
+  async hybridSearch(query: string, options: { limit?: number } = {}): Promise<SearchResult[]> {
+    const hybridSearch = getHybridSearch();
+    return hybridSearch.search(this.db.db, query, {
+      project: this.project,
+      limit: options.limit || 10
+    });
+  }
+
+  /**
+   * Ricerca solo semantica (vector search)
+   * Ritorna risultati basati su similarità coseno con gli embeddings
+   */
+  async semanticSearch(query: string, options: { limit?: number; threshold?: number } = {}): Promise<SearchResult[]> {
+    const embeddingService = getEmbeddingService();
+    if (!embeddingService.isAvailable()) {
+      await embeddingService.initialize();
+    }
+    if (!embeddingService.isAvailable()) return [];
+
+    const queryEmbedding = await embeddingService.embed(query);
+    if (!queryEmbedding) return [];
+
+    const vectorSearch = getVectorSearch();
+    const results = await vectorSearch.search(this.db.db, queryEmbedding, {
+      project: this.project,
+      limit: options.limit || 10,
+      threshold: options.threshold || 0.3
+    });
+
+    return results.map(r => ({
+      id: String(r.observationId),
+      title: r.title,
+      content: r.text || '',
+      type: r.type,
+      project: r.project,
+      created_at: r.created_at,
+      score: r.similarity,
+      source: 'vector' as const
+    }));
+  }
+
+  /**
+   * Genera embeddings per osservazioni che non li hanno ancora
+   */
+  async backfillEmbeddings(batchSize: number = 50): Promise<number> {
+    const vectorSearch = getVectorSearch();
+    return vectorSearch.backfillEmbeddings(this.db.db, batchSize);
+  }
+
+  /**
+   * Statistiche sugli embeddings nel database
+   */
+  getEmbeddingStats(): { total: number; embedded: number; percentage: number } {
+    const vectorSearch = getVectorSearch();
+    return vectorSearch.getStats(this.db.db);
+  }
+
+  /**
+   * Inizializza il servizio di embedding (lazy, chiamare prima di hybridSearch)
+   */
+  async initializeEmbeddings(): Promise<boolean> {
+    const hybridSearch = getHybridSearch();
+    await hybridSearch.initialize();
+    return getEmbeddingService().isAvailable();
+  }
+
+  /**
    * Getter for direct database access (for API routes)
    */
   getDb(): any {
@@ -273,3 +382,5 @@ export type {
   SearchFilters,
   TimelineEntry
 } from '../types/worker-types.js';
+
+export type { SearchResult } from '../services/search/HybridSearch.js';

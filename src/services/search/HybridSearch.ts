@@ -1,8 +1,12 @@
 /**
- * Hybrid search combining ChromaDB (vector) and SQLite (keyword)
+ * Ricerca ibrida: combina vector search locale (SQLite BLOB) con keyword search (FTS5)
+ *
+ * Se il servizio di embedding è disponibile, esegue ricerca semantica + keyword
+ * e fonde i risultati con scoring ibrido. Altrimenti, fallback a solo FTS5.
  */
 
-import { ChromaManager } from './ChromaManager.js';
+import { getEmbeddingService } from './EmbeddingService.js';
+import { getVectorSearch } from './VectorSearch.js';
 import type { Database } from 'bun:sqlite';
 import { logger } from '../../utils/logger.js';
 
@@ -14,25 +18,29 @@ export interface SearchResult {
   project: string;
   created_at: string;
   score: number;
-  source: 'vector' | 'keyword';
+  source: 'vector' | 'keyword' | 'hybrid';
 }
 
 export class HybridSearch {
-  private chromaManager: ChromaManager;
-
-  constructor() {
-    this.chromaManager = new ChromaManager();
-  }
+  private embeddingInitialized = false;
 
   /**
-   * Initialize search (connects to ChromaDB if available)
+   * Inizializza il servizio di embedding (lazy, non bloccante)
    */
   async initialize(): Promise<void> {
-    await this.chromaManager.initialize();
+    try {
+      const embeddingService = getEmbeddingService();
+      await embeddingService.initialize();
+      this.embeddingInitialized = embeddingService.isAvailable();
+      logger.info('SEARCH', `HybridSearch inizializzato (embedding: ${this.embeddingInitialized ? 'attivo' : 'disattivato'})`);
+    } catch (error) {
+      logger.warn('SEARCH', 'Inizializzazione embedding fallita, uso solo FTS5', {}, error as Error);
+      this.embeddingInitialized = false;
+    }
   }
 
   /**
-   * Perform hybrid search combining vector and keyword results
+   * Ricerca ibrida: vector + keyword
    */
   async search(
     db: Database,
@@ -45,34 +53,41 @@ export class HybridSearch {
     const limit = options.limit || 10;
     const results: SearchResult[] = [];
 
-    // Get vector search results if ChromaDB is available
-    if (this.chromaManager.isChromaAvailable()) {
+    // Ricerca vettoriale (se embedding disponibile)
+    if (this.embeddingInitialized) {
       try {
-        const vectorResults = await this.chromaManager.search(query, {
-          project: options.project,
-          limit: Math.ceil(limit / 2)
-        });
+        const embeddingService = getEmbeddingService();
+        const queryEmbedding = await embeddingService.embed(query);
 
-        for (const hit of vectorResults) {
-          results.push({
-            id: hit.id,
-            title: hit.metadata.title || 'Untitled',
-            content: hit.content,
-            type: hit.metadata.type || 'unknown',
-            project: hit.metadata.project || 'unknown',
-            created_at: hit.metadata.created_at || new Date().toISOString(),
-            score: 1 - hit.distance, // Convert distance to similarity score
-            source: 'vector'
+        if (queryEmbedding) {
+          const vectorSearch = getVectorSearch();
+          const vectorResults = await vectorSearch.search(db, queryEmbedding, {
+            project: options.project,
+            limit: Math.ceil(limit / 2),
+            threshold: 0.3
           });
-        }
 
-        logger.debug('SEARCH', `Vector search returned ${vectorResults.length} results`);
+          for (const hit of vectorResults) {
+            results.push({
+              id: String(hit.observationId),
+              title: hit.title,
+              content: hit.text || '',
+              type: hit.type,
+              project: hit.project,
+              created_at: hit.created_at,
+              score: hit.similarity, // Cosine similarity 0-1
+              source: 'vector'
+            });
+          }
+
+          logger.debug('SEARCH', `Vector search: ${vectorResults.length} risultati`);
+        }
       } catch (error) {
-        logger.warn('SEARCH', 'Vector search failed, using keyword only', {}, error as Error);
+        logger.warn('SEARCH', 'Ricerca vettoriale fallita, uso solo keyword', {}, error as Error);
       }
     }
 
-    // Get keyword search results from SQLite
+    // Ricerca keyword FTS5 (sempre attiva)
     try {
       const { searchObservations } = await import('../sqlite/Observations.js');
       const keywordResults = searchObservations(db, query, options.project);
@@ -85,44 +100,49 @@ export class HybridSearch {
           type: obs.type,
           project: obs.project,
           created_at: obs.created_at,
-          score: 0.5, // Default score for keyword matches
+          score: 0.5, // Score di default per keyword match
           source: 'keyword'
         });
       }
 
-      logger.debug('SEARCH', `Keyword search returned ${keywordResults.length} results`);
+      logger.debug('SEARCH', `Keyword search: ${keywordResults.length} risultati`);
     } catch (error) {
-      logger.error('SEARCH', 'Keyword search failed', {}, error as Error);
+      logger.error('SEARCH', 'Ricerca keyword fallita', {}, error as Error);
     }
 
-    // Sort by score and remove duplicates
-    const uniqueResults = this.deduplicateAndSort(results, limit);
-    
-    return uniqueResults;
+    // Deduplicazione e ordinamento per score
+    return this.deduplicateAndSort(results, limit);
   }
 
   /**
-   * Remove duplicates and sort by score
+   * Rimuovi duplicati e ordina per score decrescente
    */
   private deduplicateAndSort(results: SearchResult[], limit: number): SearchResult[] {
-    const seen = new Set<string>();
-    const unique: SearchResult[] = [];
+    const seen = new Map<string, SearchResult>();
 
     for (const result of results) {
-      if (!seen.has(result.id)) {
-        seen.add(result.id);
-        unique.push(result);
+      const existing = seen.get(result.id);
+      if (!existing) {
+        seen.set(result.id, result);
+      } else if (result.score > existing.score) {
+        // Se presente in entrambe le sorgenti, prendi lo score migliore
+        seen.set(result.id, {
+          ...result,
+          source: 'hybrid',
+          // Scoring ibrido: boost per risultati presenti in entrambe le sorgenti
+          score: Math.min(1, result.score * 1.2)
+        });
       }
     }
 
-    // Sort by score descending
+    const unique = Array.from(seen.values());
     unique.sort((a, b) => b.score - a.score);
 
     return unique.slice(0, limit);
   }
 }
 
-// Singleton instance
+// Singleton
 let hybridSearch: HybridSearch | null = null;
 
 export function getHybridSearch(): HybridSearch {

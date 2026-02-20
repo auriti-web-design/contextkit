@@ -107,6 +107,28 @@ const TOOLS = [
       },
       required: ['project']
     }
+  },
+  {
+    name: 'semantic_search',
+    description: 'Semantic search using vector embeddings. Finds observations by meaning, not just keywords. E.g. searching "authentication fix" also finds "OAuth token refresh". Falls back to keyword search if embeddings are unavailable.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {
+        query: { type: 'string', description: 'Natural language query for semantic search' },
+        project: { type: 'string', description: 'Filter by project name (optional)' },
+        limit: { type: 'number', description: 'Max number of results (default: 10)' }
+      },
+      required: ['query']
+    }
+  },
+  {
+    name: 'embedding_stats',
+    description: 'Show embedding statistics: total observations, how many have embeddings, embedding provider info.',
+    inputSchema: {
+      type: 'object' as const,
+      properties: {},
+      required: []
+    }
   }
 ];
 
@@ -225,6 +247,51 @@ const handlers: Record<string, ToolHandler> = {
       obs.slice(0, 10).forEach((o: any) => {
         output += `- **${o.title}** [${o.type}]: ${(o.text || '').substring(0, 100)}\n`;
       });
+    }
+
+    return output;
+  },
+
+  async semantic_search(args: { query: string; project?: string; limit?: number }) {
+    const result = await callWorkerGET('/api/hybrid-search', {
+      q: args.query,
+      project: args.project || '',
+      limit: String(args.limit || 10)
+    });
+
+    const hits = result.results || [];
+
+    if (hits.length === 0) {
+      return 'No semantic results found for the query.';
+    }
+
+    let output = `## Semantic Search: "${args.query}"\n\n`;
+    output += `Found ${hits.length} results:\n\n`;
+
+    hits.forEach((h: any) => {
+      const scorePercent = Math.round((h.score || 0) * 100);
+      const source = h.source || 'unknown';
+      output += `- **#${h.id}** [${h.type}] ${h.title} (score: ${scorePercent}%, source: ${source})\n`;
+      if (h.content) output += `  ${h.content.substring(0, 150)}\n`;
+      output += '\n';
+    });
+
+    return output;
+  },
+
+  async embedding_stats() {
+    const result = await callWorkerGET('/api/embeddings/stats');
+
+    let output = `## Embedding Statistics\n\n`;
+    output += `- **Total observations**: ${result.total}\n`;
+    output += `- **With embeddings**: ${result.embedded}\n`;
+    output += `- **Coverage**: ${result.percentage}%\n`;
+    output += `- **Provider**: ${result.provider || 'none'}\n`;
+    output += `- **Dimensions**: ${result.dimensions}\n`;
+    output += `- **Available**: ${result.available ? 'yes' : 'no'}\n`;
+
+    if (result.percentage < 100 && result.total > 0) {
+      output += `\n_Tip: Run \`kiro-memory embeddings backfill\` to generate missing embeddings._\n`;
     }
 
     return output;
