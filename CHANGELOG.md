@@ -5,6 +5,30 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-02-20
+
+### Added
+
+- **Multi-Editor Support**: One-command install for Claude Code, Cursor, Windsurf, and Cline (`kiro-memory install --claude-code|--cursor|--windsurf|--cline`)
+- **Local Vector Search (Phase 2A)**: Semantic similarity search using local embeddings (fastembed/transformers.js). No API keys required. CLI: `kiro-memory semantic-search`, `kiro-memory embeddings`
+- **Smart Ranking (Phase 2B)**: 4-signal scoring (recency, frequency, semantic similarity, decay) for relevance-ordered search results. SDK: `hybridSearch()`
+- **Memory Decay (Phase 2C)**: Automatic stale detection and consolidation of old observations. CLI: `kiro-memory decay`. SDK: `runDecay()`, `consolidateStale()`
+- **Analytics Dashboard (Phase 4A)**: Activity timeline, type distribution, session stats, and file hotspots via worker API (`/api/analytics/*`) and web dashboard
+- **Structured Knowledge (Phase 5A)**: Store architectural decisions, constraints, heuristics, and rejected approaches. MCP tool: `store_knowledge`. CLI: `kiro-memory add-knowledge`
+- **Session Checkpoint & Resume (Phase 6A+6B)**: Save/restore session state with checkpoint data. MCP tool: `resume_session`. CLI: `kiro-memory resume`. SDK: `createCheckpoint()`, `getCheckpoint()`
+- **Activity Reports (Phase 4B)**: Weekly/monthly digests with overview, timeline, type distribution, session stats, learnings, completed tasks, next steps, and file hotspots. Three output formats: text (ANSI), Markdown, JSON. MCP tool: `generate_report`. CLI: `kiro-memory report --period=weekly|monthly --format=text|md|json`
+- **6 New MCP Tools**: `store_observation`, `store_summary`, `store_knowledge`, `resume_session`, `generate_report`, `get_recent_context` (total: 10 tools)
+- **Database Migrations v4-v6**: New tables for embeddings, knowledge, checkpoints; new columns for decay tracking
+
+### Security
+
+- Fixed HIGH/MEDIUM vulnerabilities from security audit (path traversal, input validation, rate limiting improvements)
+
+### Changed
+
+- Updated package description and keywords for multi-editor support
+- README rewritten with multi-editor quick start, updated architecture diagram, full MCP tool table, and expanded SDK/CLI reference
+
 ## [1.6.0] - 2026-02-20
 
 ### Security
@@ -104,6 +128,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Session Summaries**: Structured summaries generated automatically at session end
 - **Web Dashboard**: Real-time viewer at `http://localhost:3001`
 
+[1.7.0]: https://github.com/auriti-web-design/kiro-memory/compare/v1.6.0...v1.7.0
 [1.6.0]: https://github.com/auriti-web-design/kiro-memory/compare/v1.5.0...v1.6.0
 [1.5.0]: https://github.com/auriti-web-design/kiro-memory/compare/v1.3.0...v1.5.0
 [1.4.1]: https://github.com/auriti-web-design/kiro-memory/compare/v1.3.0...v1.4.1

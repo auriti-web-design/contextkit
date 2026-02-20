@@ -3,7 +3,8 @@
 </p>
 
 <p align="center">
-  <strong>Persistent cross-session memory for <a href="https://kiro.dev/">Kiro CLI</a>.</strong>
+  <strong>Persistent cross-session memory for AI coding assistants.</strong><br/>
+  <em>Works with <a href="https://docs.anthropic.com/en/docs/agents-and-tools/claude-code/overview">Claude Code</a>, <a href="https://www.cursor.com/">Cursor</a>, <a href="https://codeium.com/windsurf">Windsurf</a>, <a href="https://github.com/cline/cline">Cline</a>, and any MCP-compatible editor.</em>
 </p>
 
 <p align="center">
@@ -14,7 +15,9 @@
 
 ---
 
-Kiro Memory gives your Kiro agent memory that persists across sessions. It automatically captures what happened -- files changed, tools used, decisions made -- and feeds relevant context back at the start of the next session. No manual bookkeeping. Your agent picks up exactly where it left off.
+Kiro Memory gives your AI coding assistant memory that persists across sessions. It automatically captures what happened -- files changed, tools used, decisions made -- and feeds relevant context back at the start of the next session. No manual bookkeeping. Your agent picks up exactly where it left off.
+
+Works with **Claude Code** (hooks), **Cursor** (rules + MCP), **Windsurf** (rules + MCP), **Cline** (custom instructions + MCP), and any editor that supports the **Model Context Protocol**.
 
 ## What Your Agent Sees
 
@@ -40,13 +43,18 @@ When a new session starts, Kiro Memory automatically injects previous session co
 
 ## Features
 
-- **Automatic Context Injection** -- Previous session knowledge injected at agent start via `agentSpawn` hook
-- **Prompt Tracking** -- Every user prompt recorded for continuity (`userPromptSubmit` hook)
-- **Tool & File Monitoring** -- File writes, command executions, and tool usage captured in real time (`postToolUse` hook)
-- **Session Summaries** -- Structured summaries generated when sessions end (`stop` hook)
+- **Multi-Editor Support** -- Works with Claude Code, Cursor, Windsurf, Cline, and any MCP-compatible editor
+- **Automatic Context Injection** -- Previous session knowledge injected at agent start via hooks
+- **Vector Search** -- Local embeddings with semantic similarity search (no API keys required)
+- **Smart Ranking** -- 4-signal scoring (recency, frequency, semantic, decay) for relevance ordering
+- **Memory Decay** -- Automatic stale detection and consolidation of old observations
+- **Structured Knowledge** -- Store architectural decisions, constraints, heuristics, and rejected approaches
+- **Session Checkpoint & Resume** -- Checkpoint sessions and resume from where you left off
+- **Activity Reports** -- Weekly/monthly digests in text, Markdown, or JSON format
+- **Analytics Dashboard** -- Activity timeline, type distribution, session stats, and file hotspots
+- **Session Summaries** -- Structured summaries generated when sessions end
 - **Web Dashboard** -- Real-time viewer at `http://localhost:3001` with dark/light theme, search, project filters, and live updates via SSE
-- **Auto-Start Worker** -- The background worker starts automatically when a Kiro session begins (no manual setup required)
-- **MCP Server** -- 4 tools (`search`, `timeline`, `get_observations`, `get_context`) exposed via Model Context Protocol
+- **MCP Server** -- 10 tools exposed via Model Context Protocol
 - **Full-Text Search** -- SQLite FTS5 for fast, typo-tolerant search across all stored context
 - **TypeScript SDK** -- Programmatic access to the entire memory system
 - **CLI** -- Query and manage context directly from the terminal
@@ -57,8 +65,12 @@ When a new session starts, Kiro Memory automatically injects previous session co
 # Install globally
 npm install -g kiro-memory
 
-# Install into Kiro CLI (hooks + MCP server + agent config)
-kiro-memory install
+# Install for your editor
+kiro-memory install              # Auto-detects your editor
+kiro-memory install --claude-code  # Claude Code (hooks + MCP)
+kiro-memory install --cursor       # Cursor (rules + MCP)
+kiro-memory install --windsurf     # Windsurf (rules + MCP)
+kiro-memory install --cline        # Cline (instructions + MCP)
 ```
 
 Or from source:
@@ -70,96 +82,71 @@ npm install && npm run build
 npm run install:kiro
 ```
 
-### Start Kiro with memory enabled
+Once installed, the worker auto-starts and the web dashboard is available at `http://localhost:3001`.
 
-Kiro Memory works as a **custom agent**. You must start Kiro with the `--agent` flag:
+## Editor Integration
 
-```bash
-kiro-cli --agent kiro-memory
-```
+### Claude Code
 
-> **Why?** Kiro Memory uses hooks (`agentSpawn`, `postToolUse`, `userPromptSubmit`, `stop`) to capture context automatically. Hooks are defined inside the agent configuration, so they only run when the `kiro-memory` agent is active.
+Registers **4 hooks** and an **MCP server** automatically via `kiro-memory install --claude-code`:
 
-To avoid typing the flag every time, add an alias to your shell:
+| Hook | Trigger | Purpose |
+|------|---------|---------|
+| `PreToolUse` | Before tool runs | Injects session context |
+| `PostToolUse` | After tool completes | Captures file writes, commands, research |
+| `Notification` | User sends prompt | Records prompts for continuity |
+| `Stop` | Session ends | Generates structured session summary |
 
-```bash
-# Bash
-echo 'alias kiro="kiro-cli --agent kiro-memory"' >> ~/.bashrc && source ~/.bashrc
+### Cursor / Windsurf / Cline
 
-# Zsh
-echo 'alias kiro="kiro-cli --agent kiro-memory"' >> ~/.zshrc && source ~/.zshrc
-```
+For editors without hook support, Kiro Memory uses **rules files** + **MCP server**:
 
-Once running, the worker auto-starts and the web dashboard is available at `http://localhost:3001`.
+- **Cursor**: `.cursor/rules/kiro-memory.mdc` + MCP config in `.cursor/mcp.json`
+- **Windsurf**: `.windsurfrules` + MCP config in `~/.codeium/windsurf/mcp_config.json`
+- **Cline**: `.clinerules` + MCP config in Cline settings
 
-## Kiro Integration
-
-Kiro Memory registers **4 hooks** and an **MCP server** with Kiro CLI via a custom agent. The agent configuration is installed to `~/.kiro/agents/kiro-memory.json` and is activated with `kiro --agent kiro-memory`:
-
-```json
-{
-  "name": "kiro-memory",
-  "tools": ["read", "write", "shell", "glob", "grep", "@kiro-memory"],
-  "mcpServers": {
-    "kiro-memory": {
-      "command": "node",
-      "args": ["/path/to/dist/servers/mcp-server.js"]
-    }
-  },
-  "hooks": {
-    "agentSpawn": [{ "command": "node /path/to/dist/hooks/agentSpawn.js" }],
-    "userPromptSubmit": [{ "command": "node /path/to/dist/hooks/userPromptSubmit.js" }],
-    "postToolUse": [{ "command": "node /path/to/dist/hooks/postToolUse.js", "matcher": "*" }],
-    "stop": [{ "command": "node /path/to/dist/hooks/stop.js" }]
-  }
-}
-```
-
-The hooks are fully automatic. No changes to your workflow required.
+The MCP server exposes 10 tools that your AI assistant can use directly.
 
 ## Architecture
 
 ```
-                     Kiro CLI
+          Claude Code / Cursor / Windsurf / Cline
                         |
           +-------------+-------------+
           |             |             |
-     agentSpawn   postToolUse      stop
-   (inject ctx)  (track tools)  (summarize)
+       Hooks      MCP Server    Rules Files
+   (auto-capture)  (10 tools)  (editor config)
           |             |             |
           +------+------+------+------+
                  |             |
-            Worker HTTP    MCP Server
-            (port 3001)     (stdio)
+            Worker HTTP    Vector Index
+            (port 3001)   (embeddings)
                  |             |
             Web Dashboard     |
           (localhost:3001)    |
                  |            |
                  +------+-----+
                         |
-                   SQLite + FTS5
-               (~/.kiro-memory/kiro-memory.db)
+              SQLite + FTS5 + Embeddings
+             (~/.kiro-memory/kiro-memory.db)
 ```
 
-> The worker auto-starts when `agentSpawn` fires. No manual setup required.
-
-### Hooks
-
-| Hook | Trigger | Purpose |
-|------|---------|---------|
-| `agentSpawn` | Session starts | Injects relevant context from previous sessions |
-| `userPromptSubmit` | User sends prompt | Records the prompt for session continuity |
-| `postToolUse` | Any tool completes | Captures file writes, commands, research actions |
-| `stop` | Session ends | Generates and stores a structured session summary |
+> The worker auto-starts when a session begins. No manual setup required.
 
 ### MCP Tools
 
 | Tool | Description |
 |------|-------------|
-| `search` | Full-text search across observations and summaries. Supports project and type filters. |
-| `timeline` | Chronological context around a specific observation. Shows what happened before and after. |
-| `get_observations` | Retrieve full details of specific observations by ID. Use after `search` to drill down. |
-| `get_context` | Get recent observations, summaries, and prompts for a project. |
+| `search` | Full-text search across observations and summaries with project/type filters |
+| `timeline` | Chronological context around a specific observation |
+| `get_observations` | Retrieve full details of observations by ID |
+| `get_context` | Get recent observations, summaries, and prompts for a project |
+| `store_observation` | Store a new observation from the AI assistant |
+| `store_summary` | Store a session summary |
+| `store_knowledge` | Store structured knowledge (decision, constraint, heuristic, rejected) |
+| `resume_session` | Get checkpoint data to resume a previous session |
+| `generate_report` | Generate weekly/monthly activity report in Markdown |
+| `get_recent_context` | Get recent memory context for session injection |
 
 ### Storage
 
@@ -181,8 +168,6 @@ const ctx = createKiroMemory({ project: 'my-project' });
 
 // Retrieve context for the current project
 const context = await ctx.getContext();
-console.log(context.relevantObservations);
-console.log(context.relevantSummaries);
 
 // Store an observation
 await ctx.storeObservation({
@@ -191,22 +176,23 @@ await ctx.storeObservation({
   content: 'Fixed OAuth flow -- tokens now refresh with 5-min buffer'
 });
 
-// Full-text search with filters
-const results = await ctx.searchAdvanced('authentication', {
-  type: 'file-write',
-  limit: 10
+// Semantic search with vector embeddings
+const results = await ctx.hybridSearch('authentication flow', { limit: 10 });
+
+// Store structured knowledge
+await ctx.storeKnowledge({
+  knowledgeType: 'decision',
+  title: 'Chose PostgreSQL over MongoDB',
+  content: 'ACID compliance required for financial transactions',
+  reasoning: 'Need strong consistency guarantees'
 });
 
-// Get chronological timeline around an observation
-const timeline = await ctx.getTimeline(42, 5, 5);
+// Session checkpoint & resume
+await ctx.createCheckpoint('session-123', { completedSteps: ['auth', 'db'] });
+const checkpoint = await ctx.getCheckpoint('session-123');
 
-// Store a session summary
-await ctx.storeSummary({
-  request: 'Implement OAuth2 login',
-  learned: 'Google OAuth requires PKCE for SPAs',
-  completed: 'Login flow with Google provider',
-  nextSteps: 'Add refresh token rotation'
-});
+// Generate activity report
+const report = await ctx.generateReport({ period: 'weekly' });
 
 // Always close when done
 ctx.close();
@@ -216,16 +202,22 @@ ctx.close();
 
 | Method | Returns | Description |
 |--------|---------|-------------|
-| `getContext()` | `ContextContext` | Recent observations, summaries, and prompts for the project |
+| `getContext()` | `ContextContext` | Recent observations, summaries, and prompts |
 | `storeObservation(data)` | `number` | Store an observation, returns its ID |
 | `storeSummary(data)` | `number` | Store a session summary, returns its ID |
 | `search(query)` | `{ observations, summaries }` | Basic full-text search |
-| `searchAdvanced(query, filters)` | `{ observations, summaries }` | FTS5 search with project/type/date/limit filters |
+| `searchAdvanced(query, filters)` | `{ observations, summaries }` | FTS5 search with filters |
+| `hybridSearch(query, opts)` | `ScoredResult[]` | Vector + FTS5 hybrid search with smart ranking |
+| `semanticSearch(query, opts)` | `ScoredResult[]` | Pure vector similarity search |
+| `storeKnowledge(data)` | `number` | Store structured knowledge (decision/constraint/heuristic) |
+| `getKnowledge(filters)` | `KnowledgeItem[]` | Retrieve knowledge by type |
+| `createCheckpoint(sessionId, data)` | `void` | Save session checkpoint for resume |
+| `getCheckpoint(sessionId)` | `DBCheckpoint \| null` | Retrieve latest session checkpoint |
+| `generateReport(opts)` | `ReportData` | Generate weekly/monthly activity report |
+| `runDecay(opts)` | `DecayResult` | Run memory decay and stale detection |
+| `consolidateStale(opts)` | `ConsolidateResult` | Consolidate stale observations |
 | `getTimeline(anchorId, before, after)` | `TimelineEntry[]` | Chronological context around an observation |
-| `getRecentObservations(limit)` | `Observation[]` | Most recent observations |
-| `getRecentSummaries(limit)` | `Summary[]` | Most recent summaries |
 | `getOrCreateSession(id)` | `DBSession` | Get or initialize a session |
-| `storePrompt(sessionId, num, text)` | `number` | Store a user prompt |
 | `close()` | `void` | Close the database connection |
 
 ## CLI Reference
@@ -236,27 +228,41 @@ kiro-memory <command> [options]
 
 | Command | Alias | Description |
 |---------|-------|-------------|
+| `kiro-memory install` | -- | Install hooks + MCP for your editor |
 | `kiro-memory context` | `ctx` | Display current project context |
 | `kiro-memory search <query>` | -- | Search across all stored context |
-| `kiro-memory observations [limit]` | `obs` | Show recent observations (default: 10) |
-| `kiro-memory summaries [limit]` | `sum` | Show recent summaries (default: 5) |
+| `kiro-memory semantic-search <query>` | `ss` | Vector similarity search |
+| `kiro-memory observations [limit]` | `obs` | Show recent observations |
+| `kiro-memory summaries [limit]` | `sum` | Show recent summaries |
 | `kiro-memory add-observation <title> <content>` | `add-obs` | Manually add an observation |
 | `kiro-memory add-summary <content>` | `add-sum` | Manually add a summary |
+| `kiro-memory add-knowledge <type> <title> <content>` | -- | Store structured knowledge |
+| `kiro-memory resume [sessionId]` | -- | Resume from last checkpoint |
+| `kiro-memory report` | -- | Generate activity report |
+| `kiro-memory decay` | -- | Run memory decay detection |
+| `kiro-memory embeddings` | -- | Build/rebuild vector index |
+| `kiro-memory doctor` | -- | Run environment diagnostics |
 
 ### Examples
 
 ```bash
-# View what Kiro Memory knows about your project
-kiro-memory context
+# Install for Claude Code
+kiro-memory install --claude-code
 
-# Search for past work on authentication
-kiro-memory search "OAuth token refresh"
+# Search with vector similarity
+kiro-memory semantic-search "authentication flow"
 
-# Show the last 20 observations
-kiro-memory observations 20
+# Generate a weekly report in Markdown
+kiro-memory report --period=weekly --format=md --output=report.md
 
-# Manually record a decision
-kiro-memory add-observation "Architecture Decision" "Chose PostgreSQL over MongoDB for ACID compliance"
+# Store an architectural decision
+kiro-memory add-knowledge decision "Use PostgreSQL" "ACID compliance for transactions"
+
+# Resume a previous session
+kiro-memory resume
+
+# Run memory decay to clean stale observations
+kiro-memory decay --days=30
 ```
 
 ## Configuration
