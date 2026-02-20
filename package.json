@@ -58,7 +58,7 @@
     "worker:restart": "bun plugin/scripts/worker-service.cjs restart",
     "worker:status": "bun plugin/scripts/worker-service.cjs status",
     "worker:logs": "tail -n 50 ~/.contextkit/logs/worker-$(date +%Y-%m-%d).log",
-    "worker:tail": "tail -f 50 ~/.contextkit/logs/worker-$(date +%Y-%m-%d).log",
+    "worker:tail": "tail -f -n 50 ~/.contextkit/logs/worker-$(date +%Y-%m-%d).log",
     "queue": "bun scripts/check-pending-queue.ts",
     "queue:process": "bun scripts/check-pending-queue.ts --process",
     "queue:clear": "bun scripts/clear-failed-queue.ts --all --force",

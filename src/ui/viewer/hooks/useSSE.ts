@@ -79,7 +79,17 @@ export function useSSE(): SSEState {
       }
     };
 
+    /** Re-fetch completo di tutti i dati (usato al reconnect per recuperare eventi persi) */
+    const fetchAll = () => {
+      fetchObservations();
+      fetchSummaries();
+      fetchPrompts();
+      fetchProjects();
+    };
+
     /* ── SSE con exponential backoff ── */
+    let wasConnected = false;
+
     const connect = () => {
       if (!mountedRef.current) return;
 
@@ -87,6 +97,12 @@ export function useSSE(): SSEState {
 
       eventSource.onopen = () => {
         if (!mountedRef.current) return;
+        // Se è un reconnect (non la prima connessione), re-fetch tutti i dati
+        // per recuperare eventuali eventi persi durante la disconnessione
+        if (wasConnected) {
+          fetchAll();
+        }
+        wasConnected = true;
         retryCount = 0;
         setState(prev => ({ ...prev, isConnected: true }));
       };
@@ -118,10 +134,7 @@ export function useSSE(): SSEState {
     };
 
     // Fetch iniziale di tutti i dati
-    fetchObservations();
-    fetchSummaries();
-    fetchPrompts();
-    fetchProjects();
+    fetchAll();
 
     // Avvia connessione SSE
     connect();

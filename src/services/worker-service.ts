@@ -274,11 +274,18 @@ app.get('/api/observations', (req, res) => {
   const _limit = limit ? parseInt(limit, 10) : 50;
 
   try {
+    const countSql = project
+      ? 'SELECT COUNT(*) as total FROM observations WHERE project = ?'
+      : 'SELECT COUNT(*) as total FROM observations';
+    const countStmt = db.db.query(countSql);
+    const { total } = (project ? countStmt.get(project) : countStmt.get()) as { total: number };
+
     const sql = project
       ? 'SELECT * FROM observations WHERE project = ? ORDER BY created_at_epoch DESC LIMIT ? OFFSET ?'
       : 'SELECT * FROM observations ORDER BY created_at_epoch DESC LIMIT ? OFFSET ?';
     const stmt = db.db.query(sql);
     const rows = project ? stmt.all(project, _limit, _offset) : stmt.all(_limit, _offset);
+    res.setHeader('X-Total-Count', total);
     res.json(rows);
   } catch (error) {
     logger.error('WORKER', 'Lista osservazioni fallita', {}, error as Error);
@@ -293,11 +300,18 @@ app.get('/api/summaries', (req, res) => {
   const _limit = limit ? parseInt(limit, 10) : 20;
 
   try {
+    const countSql = project
+      ? 'SELECT COUNT(*) as total FROM summaries WHERE project = ?'
+      : 'SELECT COUNT(*) as total FROM summaries';
+    const countStmt = db.db.query(countSql);
+    const { total } = (project ? countStmt.get(project) : countStmt.get()) as { total: number };
+
     const sql = project
       ? 'SELECT * FROM summaries WHERE project = ? ORDER BY created_at_epoch DESC LIMIT ? OFFSET ?'
       : 'SELECT * FROM summaries ORDER BY created_at_epoch DESC LIMIT ? OFFSET ?';
     const stmt = db.db.query(sql);
     const rows = project ? stmt.all(project, _limit, _offset) : stmt.all(_limit, _offset);
+    res.setHeader('X-Total-Count', total);
     res.json(rows);
   } catch (error) {
     logger.error('WORKER', 'Lista summary fallita', {}, error as Error);
@@ -312,11 +326,18 @@ app.get('/api/prompts', (req, res) => {
   const _limit = limit ? parseInt(limit, 10) : 20;
 
   try {
+    const countSql = project
+      ? 'SELECT COUNT(*) as total FROM prompts WHERE project = ?'
+      : 'SELECT COUNT(*) as total FROM prompts';
+    const countStmt = db.db.query(countSql);
+    const { total } = (project ? countStmt.get(project) : countStmt.get()) as { total: number };
+
     const sql = project
       ? 'SELECT * FROM prompts WHERE project = ? ORDER BY created_at_epoch DESC LIMIT ? OFFSET ?'
       : 'SELECT * FROM prompts ORDER BY created_at_epoch DESC LIMIT ? OFFSET ?';
     const stmt = db.db.query(sql);
     const rows = project ? stmt.all(project, _limit, _offset) : stmt.all(_limit, _offset);
+    res.setHeader('X-Total-Count', total);
     res.json(rows);
   } catch (error) {
     logger.error('WORKER', 'Lista prompt fallita', {}, error as Error);

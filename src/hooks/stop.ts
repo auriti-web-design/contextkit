@@ -14,12 +14,15 @@ runHook('stop', async (input) => {
   const sdk = createKiroMemory({ project });
 
   try {
-    // Recupera le osservazioni recenti della sessione corrente (ultime ore)
-    const recentObs = await sdk.getRecentObservations(20);
+    // Recupera le osservazioni recenti della sessione corrente
+    const recentObs = await sdk.getRecentObservations(50);
 
-    // Se non ci sono osservazioni recenti, non generare un sommario vuoto
-    const oneHourAgo = Date.now() - (60 * 60 * 1000);
-    const sessionObs = recentObs.filter(o => o.created_at_epoch > oneHourAgo);
+    // Filtra per session_id se disponibile da Kiro, altrimenti finestra temporale di 4 ore
+    const sessionId = input.session_id;
+    const fourHoursAgo = Date.now() - (4 * 60 * 60 * 1000);
+    const sessionObs = sessionId
+      ? recentObs.filter(o => o.memory_session_id === sessionId)
+      : recentObs.filter(o => o.created_at_epoch > fourHoursAgo);
 
     if (sessionObs.length === 0) return;
 

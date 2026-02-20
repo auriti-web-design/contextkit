@@ -7,7 +7,24 @@ import type { Observation, Summary, SearchFilters, TimelineEntry } from '../../t
  */
 
 /**
- * Ricerca osservazioni con FTS5 (full-text) e filtri opzionali
+ * Sanitizza una query per FTS5: wrappa ogni termine tra virgolette
+ * per evitare che operatori riservati (AND, OR, NOT, NEAR, *, ^, :)
+ * causino errori di parsing.
+ */
+function sanitizeFTS5Query(query: string): string {
+  // Rimuovi caratteri speciali FTS5 e wrappa ogni termine tra virgolette
+  const terms = query
+    .replace(/[""]/g, '') // Rimuovi virgolette esistenti
+    .split(/\s+/)
+    .filter(t => t.length > 0)
+    .map(t => `"${t}"`);
+
+  return terms.join(' ');
+}
+
+/**
+ * Ricerca osservazioni con FTS5 (full-text) e filtri opzionali.
+ * Sanitizza la query FTS5 e fallback a LIKE in caso di errore.
  */
 export function searchObservationsFTS(
   db: Database,
@@ -17,13 +34,15 @@ export function searchObservationsFTS(
   const limit = filters.limit || 50;
 
   try {
-    // Prova FTS5
+    const safeQuery = sanitizeFTS5Query(query);
+    if (!safeQuery) return searchObservationsLIKE(db, query, filters);
+
     let sql = `
       SELECT o.* FROM observations o
       JOIN observations_fts fts ON o.id = fts.rowid
       WHERE observations_fts MATCH ?
     `;
-    const params: any[] = [query];
+    const params: any[] = [safeQuery];
 
     if (filters.project) {
       sql += ' AND o.project = ?';
@@ -48,7 +67,7 @@ export function searchObservationsFTS(
     const stmt = db.query(sql);
     return stmt.all(...params) as Observation[];
   } catch {
-    // Fallback a LIKE se FTS5 non disponibile
+    // Fallback a LIKE se FTS5 non disponibile o query malformata
     return searchObservationsLIKE(db, query, filters);
   }
 }
