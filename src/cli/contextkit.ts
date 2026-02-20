@@ -745,6 +745,122 @@ async function installClaudeCode() {
   console.log(`  Web dashboard: \x1b[4mhttp://localhost:3001\x1b[0m\n`);
 }
 
+// ─── Install Cursor command ───
+
+async function installCursor() {
+  console.log('\n=== Kiro Memory - Cursor Installation ===\n');
+  console.log('[1/3] Running environment checks...');
+
+  const checks = runEnvironmentChecks();
+  const { hasErrors } = printChecks(checks);
+
+  if (hasErrors) {
+    const { fixed, needsRestart } = await tryAutoFix(checks);
+
+    if (needsRestart) {
+      console.log('  \x1b[33mRestart your terminal and re-run: kiro-memory install --cursor\x1b[0m\n');
+      process.exit(0);
+    }
+
+    if (fixed) {
+      console.log('  Re-running checks...\n');
+      const reChecks = runEnvironmentChecks();
+      const reResult = printChecks(reChecks);
+      if (reResult.hasErrors) {
+        console.log('\x1b[31mInstallation aborted.\x1b[0m Fix the remaining issues and retry.\n');
+        process.exit(1);
+      }
+    } else if (hasErrors) {
+      console.log('\x1b[31mInstallation aborted.\x1b[0m Fix the issues and retry.\n');
+      process.exit(1);
+    }
+  }
+
+  const distDir = DIST_DIR;
+  const cursorDir = join(homedir(), '.cursor');
+  const dataDir = process.env.KIRO_MEMORY_DATA_DIR || process.env.CONTEXTKIT_DATA_DIR || join(homedir(), '.kiro-memory');
+
+  console.log('[2/3] Installing Cursor configuration...\n');
+
+  // Crea directory
+  mkdirSync(cursorDir, { recursive: true });
+  mkdirSync(dataDir, { recursive: true });
+
+  // --- hooks.json ---
+  const hooksPath = join(cursorDir, 'hooks.json');
+  let hooksConfig: any = { version: 1, hooks: {} };
+
+  if (existsSync(hooksPath)) {
+    try {
+      hooksConfig = JSON.parse(readFileSync(hooksPath, 'utf8'));
+      if (!hooksConfig.hooks) hooksConfig.hooks = {};
+      if (!hooksConfig.version) hooksConfig.version = 1;
+    } catch {
+      // File corrotto, lo ricreiamo
+    }
+  }
+
+  // Mappa eventi Cursor → script
+  const cursorHookMap: Record<string, string> = {
+    'sessionStart': 'hooks/agentSpawn.js',
+    'beforeSubmitPrompt': 'hooks/userPromptSubmit.js',
+    'afterFileEdit': 'hooks/postToolUse.js',
+    'afterShellExecution': 'hooks/postToolUse.js',
+    'afterMCPExecution': 'hooks/postToolUse.js',
+    'stop': 'hooks/stop.js'
+  };
+
+  for (const [event, script] of Object.entries(cursorHookMap)) {
+    const hookEntry = {
+      command: `node ${join(distDir, script)}`
+    };
+
+    if (!hooksConfig.hooks[event]) {
+      hooksConfig.hooks[event] = [hookEntry];
+    } else if (Array.isArray(hooksConfig.hooks[event])) {
+      // Rimuovi hook kiro-memory precedenti, aggiungi il nuovo
+      hooksConfig.hooks[event] = hooksConfig.hooks[event].filter(
+        (h: any) => !h.command?.includes('kiro-memory') && !h.command?.includes('contextkit')
+      );
+      hooksConfig.hooks[event].push(hookEntry);
+    }
+  }
+
+  writeFileSync(hooksPath, JSON.stringify(hooksConfig, null, 2), 'utf8');
+  console.log(`  → Hooks config: ${hooksPath}`);
+
+  // --- mcp.json ---
+  const mcpPath = join(cursorDir, 'mcp.json');
+  let mcpConfig: any = {};
+
+  if (existsSync(mcpPath)) {
+    try {
+      mcpConfig = JSON.parse(readFileSync(mcpPath, 'utf8'));
+    } catch {
+      // File corrotto
+    }
+  }
+
+  if (!mcpConfig.mcpServers) mcpConfig.mcpServers = {};
+
+  mcpConfig.mcpServers['kiro-memory'] = {
+    command: 'node',
+    args: [join(distDir, 'servers', 'mcp-server.js')]
+  };
+
+  writeFileSync(mcpPath, JSON.stringify(mcpConfig, null, 2), 'utf8');
+  console.log(`  → MCP config:   ${mcpPath}`);
+  console.log(`  → Data dir:     ${dataDir}`);
+
+  // 3. Riepilogo finale
+  console.log('\n[3/3] Done!\n');
+  console.log('  \x1b[32m═══ Cursor integration complete! ═══\x1b[0m\n');
+  console.log('  Memory hooks are now active for Cursor IDE.');
+  console.log('  Start a new Cursor Agent session to begin tracking context.\n');
+  console.log('  The worker starts automatically on first session.');
+  console.log(`  Web dashboard: \x1b[4mhttp://localhost:3001\x1b[0m\n`);
+}
+
 // ─── Doctor command ───
 
 async function runDoctor() {
@@ -826,6 +942,46 @@ async function runDoctor() {
       : 'Not configured (optional: run kiro-memory install --claude-code)',
   });
 
+  // Cursor integration check
+  const cursorDir = join(homedir(), '.cursor');
+  const cursorHooksPath = join(cursorDir, 'hooks.json');
+  let cursorHooksOk = false;
+  if (existsSync(cursorHooksPath)) {
+    try {
+      const cursorHooks = JSON.parse(readFileSync(cursorHooksPath, 'utf8'));
+      cursorHooksOk = !!(cursorHooks.hooks?.sessionStart || cursorHooks.hooks?.afterFileEdit);
+      if (cursorHooksOk) {
+        const allHooks = JSON.stringify(cursorHooks.hooks);
+        cursorHooksOk = allHooks.includes('kiro-memory') || allHooks.includes('agentSpawn');
+      }
+    } catch {}
+  }
+
+  const cursorMcpPath = join(cursorDir, 'mcp.json');
+  let cursorMcpOk = false;
+  if (existsSync(cursorMcpPath)) {
+    try {
+      const cursorMcp = JSON.parse(readFileSync(cursorMcpPath, 'utf8'));
+      cursorMcpOk = !!cursorMcp.mcpServers?.['kiro-memory'];
+    } catch {}
+  }
+
+  checks.push({
+    name: 'Cursor hooks',
+    ok: true, // Non-blocking: installazione opzionale
+    message: cursorHooksOk
+      ? 'Configured in ~/.cursor/hooks.json'
+      : 'Not configured (optional: run kiro-memory install --cursor)',
+  });
+
+  checks.push({
+    name: 'Cursor MCP',
+    ok: true, // Non-blocking: installazione opzionale
+    message: cursorMcpOk
+      ? 'kiro-memory registered in ~/.cursor/mcp.json'
+      : 'Not configured (optional: run kiro-memory install --cursor)',
+  });
+
   // Worker status check (informational, non-blocking)
   let workerOk = false;
   try {
@@ -859,6 +1015,8 @@ async function main() {
   if (command === 'install') {
     if (args.includes('--claude-code')) {
       await installClaudeCode();
+    } else if (args.includes('--cursor')) {
+      await installCursor();
     } else {
       await installKiro();
     }
@@ -1053,6 +1211,7 @@ function showHelp() {
 Setup:
   install                   Install for Kiro CLI (default)
   install --claude-code     Install hooks and MCP server for Claude Code
+  install --cursor          Install hooks and MCP server for Cursor IDE
   doctor                    Run environment diagnostics (checks Node, build tools, WSL, etc.)
 
 Commands:

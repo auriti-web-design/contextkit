@@ -172,6 +172,15 @@ export async function runHook(
 ): Promise<void> {
   try {
     const input = await readStdin();
+
+    // Normalizzazione cross-platform: Cursor usa workspace_roots e conversation_id
+    if (!input.cwd && input.workspace_roots?.[0]) {
+      input.cwd = input.workspace_roots[0];
+    }
+    if (!input.session_id && input.conversation_id) {
+      input.session_id = input.conversation_id;
+    }
+
     debugLog(name, 'stdin', input);
     await handler(input);
     debugLog(name, 'completato', { success: true });

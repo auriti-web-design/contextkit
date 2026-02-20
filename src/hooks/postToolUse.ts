@@ -10,6 +10,17 @@ import { runHook, detectProject, notifyWorker } from './utils.js';
 import { createKiroMemory } from '../sdk/index.js';
 
 runHook('postToolUse', async (input) => {
+  // Normalizzazione eventi Cursor: sintetizza tool_name/tool_input da eventi specifici
+  if (input.hook_event_name === 'afterFileEdit' && !input.tool_name) {
+    input.tool_name = 'Write';
+    input.tool_input = { path: input.file_path };
+    input.tool_response = { edits: input.edits };
+  }
+  if (input.hook_event_name === 'afterShellExecution' && !input.tool_name) {
+    input.tool_name = 'Bash';
+    input.tool_input = { command: input.command };
+  }
+
   if (!input.tool_name) return;
 
   // Tool completamente ignorati (nessun valore informativo)
